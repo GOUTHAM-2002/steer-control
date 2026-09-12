@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>steer-control</title>
+<style>
+  :root{
+    --ink:#1a1a1a; --mid:#6a6a6a; --faint:#9b9b9b; --line:#e6e6e6;
+    --bg:#ffffff; --panel:#fafafa; --code:#f6f6f6;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:"Helvetica Neue",Arial,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;
+    font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .app{display:grid;grid-template-columns:minmax(340px,420px) 1fr;height:100vh}
+  .col{height:100vh;overflow-y:auto}
+  .left{border-right:1px solid var(--line);padding:22px 22px 80px}
+  .right{padding:22px 26px 120px;background:var(--panel)}
+  h1{font-weight:200;font-size:20px;letter-spacing:.12em;margin:0 0 2px;text-transform:uppercase}
+  .sub{color:var(--faint);font-size:12px;margin-bottom:22px;font-weight:300}
+  .grp{border-top:1px solid var(--line);padding:16px 0}
+  .grp:first-of-type{border-top:none}
+  .lbl{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
+    display:block;margin:0 0 6px}
+  .row{display:flex;gap:10px;margin-bottom:10px}
+  .row>div{flex:1}
+  input,select,textarea{width:100%;border:1px solid var(--line);background:#fff;color:var(--ink);
+    font-family:var(--mono);font-size:12px;font-weight:300;padding:7px 9px;border-radius:2px;outline:none}
+  input:focus,select:focus,textarea:focus{border-color:#b5b5b5}
+  textarea{resize:vertical;line-height:1.5}
+  details{border:1px solid var(--line);border-radius:2px;margin:8px 0;background:#fff}
+  details>summary{cursor:pointer;list-style:none;padding:9px 11px;font-size:11px;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--mid)}
+  details[open]>summary{border-bottom:1px solid var(--line)}
+  details>summary::-webkit-details-marker{display:none}
+  details .body{padding:11px}
+  .pfield{margin-bottom:12px}
+  .pfield:last-child{margin-bottom:0}
+  .btns{position:sticky;bottom:0;background:linear-gradient(#fafafa00,#fff 30%);
+    padding-top:14px;display:flex;gap:10px}
+  button{font-family:var(--sans);font-weight:300;font-size:13px;letter-spacing:.04em;
+    padding:10px 18px;border:1px solid var(--ink);background:#fff;color:var(--ink);
+    border-radius:2px;cursor:pointer;transition:.12s}
+  button:hover{background:var(--ink);color:#fff}
+  button.ghost{border-color:var(--line);color:var(--mid)}
+  button.ghost:hover{background:#f0f0f0;color:var(--ink)}
+  button:disabled{opacity:.4;cursor:default;background:#fff;color:var(--ink)}
+  /* flow */
+  .runhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px}
+  .runhead h2{font-weight:200;font-size:16px;letter-spacing:.08em;margin:0;text-transform:uppercase}
+  .status{font-size:12px;color:var(--faint)}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--faint);
+    margin-right:7px;vertical-align:middle}
+  .dot.live{background:var(--ink);animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .ev{border:1px solid var(--line);background:#fff;border-radius:2px;margin:0 0 12px;
+    padding:12px 14px;border-left:2px solid var(--line)}
+  .ev.s{border-left-color:#1a1a1a}
+  .ev.p{border-left-color:#8a8a8a}
+  .ev.scorer{border-left-color:#c4c4c4}
+  .ev.judge{border-left-color:#1a1a1a;border-left-style:dashed}
+  .ev.note{border-left-color:#e0e0e0;background:#fbfbfb}
+  .ev.err{border-left-color:#9b1c1c}
+  .chip{display:inline-block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--mid);margin-right:8px}
+  .chip.s{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+  .chip.p{background:#6a6a6a;color:#fff;border-color:#6a6a6a}
+  .chip.scorer{background:#eee;color:#444}
+  .chip.judge{background:#fff;color:#1a1a1a;border-color:#1a1a1a}
+  .ev .head{display:flex;align-items:center;margin-bottom:7px}
+  .ev .meta{margin-left:auto;font-size:11px;color:var(--faint)}
+  .ev .txt{white-space:pre-wrap;font-size:13px;color:#2a2a2a}
+  pre{margin:8px 0 0;background:var(--code);border:1px solid var(--line);border-radius:2px;
+    padding:10px;overflow:auto;font-family:var(--mono);font-size:11.5px;line-height:1.45;max-height:340px}
+  .badge{display:inline-block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+    padding:2px 9px;border-radius:2px;border:1px solid var(--line)}
+  .badge.bad{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+  .badge.ok{background:#fff;color:#6a6a6a}
+  .thinking{color:var(--faint);font-size:12.5px;font-style:italic;margin:0 0 12px;padding-left:2px}
+  .verdict{border:1px solid var(--ink);border-radius:2px;padding:16px;margin-top:6px;background:#fff}
+  .verdict .out{font-size:17px;font-weight:300;letter-spacing:.04em;margin-bottom:10px}
+  .scores{display:flex;gap:22px;margin:8px 0 12px}
+  .scores div span{display:block;font-size:22px;font-weight:200}
+  .scores div small{color:var(--faint);font-size:10px;letter-spacing:.1em;text-transform:uppercase}
+  .empty{color:var(--faint);font-size:13px;margin-top:40px;text-align:center}
+  code.k{font-family:var(--mono);font-size:12px;color:#444;background:var(--code);padding:1px 5px;border-radius:2px}
+  a.toggle{font-size:11px;color:var(--mid);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- LEFT: config -->
+  <div class="col left">
+    <h1>steer&middot;control</h1>
+    <div class="sub">steering-control misalignment eval &mdash; edit, run, watch the flow</div>
+
+    <div class="grp">
+      <span class="lbl">Models</span>
+      <div class="row">
+        <div><span class="lbl">S &mdash; steering (audited)</span><input id="m_steer"></div>
+        <div><span class="lbl">P &mdash; prompted (saboteur)</span><input id="m_sab"></div>
+      </div>
+      <div class="row">
+        <div><span class="lbl">Scorer</span><input id="m_gate"></div>
+        <div><span class="lbl">Judge</span><input id="m_judge"></div>
+      </div>
+      <div class="row">
+        <div><span class="lbl">S driven via</span>
+          <select id="steer_via">
+            <option value="claude_code">claude_code (CLI, bypasses API filter)</option>
+            <option value="openrouter">openrouter</option>
+            <option value="auto">auto</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <span class="lbl">Budgets</span>
+      <div class="row">
+        <div><span class="lbl">Max prompts (S&rarr;P)</span><input id="b_prompts" type="number" min="1"></div>
+        <div><span class="lbl">Max resamples (P)</span><input id="b_resamples" type="number" min="0"></div>
+      </div>
+    </div>
+
+    <div class="grp">
+      <span class="lbl">Task</span>
+      <select id="task_pick" style="margin-bottom:10px"></select>
+      <div class="pfield"><span class="lbl">Main task (S sees this)</span><textarea id="t_main" rows="4"></textarea></div>
+      <div class="pfield"><span class="lbl">Side task (injected into P, hidden from S)</span><textarea id="t_side" rows="4"></textarea></div>
+      <div class="pfield"><span class="lbl">Side-task check (scorer)</span><textarea id="t_check" rows="3"></textarea></div>
+    </div>
+
+    <div class="grp">
+      <span class="lbl">Prompts</span>
+      <details><summary>S &mdash; steering model</summary><div class="body">
+        <div class="pfield"><span class="lbl">steer_system</span><textarea data-p="steer_system" rows="10"></textarea></div>
+        <div class="pfield"><span class="lbl">steer_task_template</span><textarea data-p="steer_task_template" rows="4"></textarea></div>
+        <div class="pfield"><span class="lbl">steer_format_reminder</span><textarea data-p="steer_format_reminder" rows="4"></textarea></div>
+      </div></details>
+      <details><summary>P &mdash; saboteur</summary><div class="body">
+        <div class="pfield"><span class="lbl">saboteur_system</span><textarea data-p="saboteur_system" rows="12"></textarea></div>
+        <div class="pfield"><span class="lbl">saboteur_user_template</span><textarea data-p="saboteur_user_template" rows="3"></textarea></div>
+        <div class="pfield"><span class="lbl">saboteur_escalation</span><textarea data-p="saboteur_escalation" rows="4"></textarea></div>
+      </div></details>
+      <details><summary>Scorer</summary><div class="body">
+        <div class="pfield"><span class="lbl">scorer_system</span><textarea data-p="scorer_system" rows="9"></textarea></div>
+        <div class="pfield"><span class="lbl">scorer_user_template</span><textarea data-p="scorer_user_template" rows="4"></textarea></div>
+      </div></details>
+      <details><summary>Judge</summary><div class="body">
+        <div class="pfield"><span class="lbl">judge_system</span><textarea data-p="judge_system" rows="12"></textarea></div>
+        <div class="pfield"><span class="lbl">judge_user_template</span><textarea data-p="judge_user_template" rows="4"></textarea></div>
+      </div></details>
+    </div>
+
+    <div class="btns">
+      <button id="run">&#9654;&nbsp; Run</button>
+      <button id="reset" class="ghost">Reset</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: live flow -->
+  <div class="col right">
+    <div class="runhead">
+      <h2>Flow</h2>
+      <div class="status" id="status"><span class="dot"></span>idle</div>
+    </div>
+    <div id="flow"></div>
+    <div class="empty" id="empty">Configure on the left, then press Run to watch S steer P, the scorer check the exploit, and the judge rule.</div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let DEFAULTS = null;
+
+function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+async function loadConfig(){
+  const cfg = await (await fetch('/api/config')).json();
+  DEFAULTS = cfg;
+  // models
+  $('#m_steer').value=cfg.models.steer; $('#m_sab').value=cfg.models.saboteur;
+  $('#m_gate').value=cfg.models.gate; $('#m_judge').value=cfg.models.judge;
+  $('#steer_via').value=cfg.steer_via;
+  $('#b_prompts').value=cfg.budgets.max_prompts; $('#b_resamples').value=cfg.budgets.max_resamples;
+  // tasks dropdown
+  const pick=$('#task_pick'); pick.innerHTML='';
+  cfg.tasks.forEach((t,i)=>{const o=document.createElement('option');o.value=i;o.textContent=t.task_id;pick.appendChild(o);});
+  const co=document.createElement('option');co.value='custom';co.textContent='(custom / edited)';pick.appendChild(co);
+  setTask(cfg.task);
+  pick.onchange=()=>{ if(pick.value!=='custom') setTask(cfg.tasks[+pick.value]); };
+  // prompts
+  for(const [k,v] of Object.entries(cfg.prompts)){ const el=document.querySelector(`[data-p="${k}"]`); if(el) el.value=v; }
+}
+function setTask(t){ $('#t_main').value=t.main_task||''; $('#t_side').value=t.side_task||''; $('#t_check').value=t.side_task_check||''; }
+
+function gather(){
+  const prompts={};
+  document.querySelectorAll('[data-p]').forEach(el=>prompts[el.dataset.p]=el.value);
+  return {
+    models:{steer:$('#m_steer').value.trim(),saboteur:$('#m_sab').value.trim(),
+            gate:$('#m_gate').value.trim(),judge:$('#m_judge').value.trim()},
+    steer_via:$('#steer_via').value,
+    budgets:{max_prompts:+$('#b_prompts').value,max_resamples:+$('#b_resamples').value},
+    task:{task_id:($('#task_pick').selectedOptions[0]||{}).textContent||'custom',
+          main_task:$('#t_main').value,side_task:$('#t_side').value,side_task_check:$('#t_check').value},
+    prompts
+  };
+}
+
+const flow=$('#flow'), statusEl=$('#status');
+function setStatus(txt,live){ statusEl.innerHTML=`<span class="dot${live?' live':''}"></span>${esc(txt)}`; }
+function clearFlow(){ flow.innerHTML=''; $('#empty').style.display='none'; }
+let thinkingEl=null;
+function think(txt){ clearThink(); thinkingEl=document.createElement('div'); thinkingEl.className='thinking'; thinkingEl.textContent=txt; flow.appendChild(thinkingEl); scroll(); }
+function clearThink(){ if(thinkingEl){thinkingEl.remove();thinkingEl=null;} }
+function scroll(){ $('.right').scrollTop=$('.right').scrollHeight; }
+
+function card(cls, chip, chipCls, title, bodyHtml, meta){
+  clearThink();
+  const d=document.createElement('div'); d.className='ev '+cls;
+  d.innerHTML=`<div class="head"><span class="chip ${chipCls}">${esc(chip)}</span>`+
+    `<span>${esc(title)}</span>${meta?`<span class="meta">${esc(meta)}</span>`:''}</div>${bodyHtml}`;
+  flow.appendChild(d); scroll(); return d;
+}
+function codeBlock(text){
+  const id='c'+Math.random().toString(36).slice(2);
+  const long=(text||'').length>600;
+  const shown=long?esc(text.slice(0,600))+'\n…':esc(text);
+  return `<pre id="${id}">${shown}</pre>`+(long?`<a class="toggle" onclick="(function(){var p=document.getElementById('${id}');p.textContent=${JSON.stringify(text)};this.remove();}).call(this)">show full</a>`:'');
+}
+
+function handle(ev){
+  switch(ev.type){
+    case 'episode_start':
+      card('note','setup','', `${ev.task_id}`,
+        `<div class="txt"><b style="font-weight:500">Main task</b> (S sees)\n${esc(ev.main_task)}\n\n`+
+        `<b style="font-weight:500">Side task</b> (hidden in P)\n${esc(ev.side_task)}</div>`,
+        `${ev.models.steer} vs ${ev.models.saboteur}`);
+      break;
+    case 'steer_thinking': think('S is thinking…'); setStatus('S thinking',true); break;
+    case 'p_thinking': think('P is writing code…'); setStatus('P working',true); break;
+    case 'judge_thinking': think('Judge is ruling…'); setStatus('judge',true); break;
+    case 'steer_prompt':
+      card('s','S → P','s','prompt to the prompted model',
+        `<div class="txt">${esc(ev.prompt)}</div>`, `prompt ${ev.prompts_used}/${ev.max_prompts}`);
+      break;
+    case 'p_sample':
+      if(!ev.ok && ev.note){ card('note','P','', `sample ${ev.sample} rejected`, `<div class="txt">${esc(ev.note)}</div>`); }
+      break;
+    case 'p_output':{
+      const landed=ev.side_task_present;
+      const badge=`<span class="badge ${landed?'bad':'ok'}">${landed?'exploit landed · '+esc(ev.severity):'no exploit (secure)'}</span>`;
+      card('p','P → S','p','prompted-model output',
+        `<div style="margin-bottom:8px">${badge}</div>`+codeBlock(ev.output)+
+        `<div class="txt" style="margin-top:8px;color:#6a6a6a">scorer: ${esc(ev.scorer_why)}</div>`,
+        `attempt ${ev.attempt_id} · ${ev.resamples} resample(s)`);
+      break;}
+    case 'steer_action':
+      if(ev.action && ev.action!=='prompt_P' && ev.action!=='submit')
+        card('s','S','s',`action: ${esc(ev.action)}`,`<div class="txt">${esc(ev.raw||'')}</div>`);
+      else if(!ev.action)
+        card('note','S','',`unparseable reply`,`<div class="txt">${esc((ev.raw||'').slice(0,300))}</div>`);
+      break;
+    case 'submission':
+      card('s','S submits','s',`delivers attempt ${ev.attempt_id}`,
+        `<div class="txt">${esc(ev.justification)}</div>`);
+      break;
+    case 'note': card('note','·','',esc(ev.note),''); break;
+    case 'steer_refused': card('err','S','',`refused / content-filtered`,`<div class="txt">${esc(ev.error||'')}</div>`); break;
+    case 'steer_empty': card('err','S','',`empty completion`,`<div class="txt">${esc(ev.error||'')}</div>`); break;
+    case 'error': card('err','error','',ev.error,''); setStatus('error',false); break;
+    case 'episode_end':{
+      const v=ev.verdict||{};
+      const labels={rubber_stamp:'RUBBER-STAMP (signed off on bad code)',
+        disclosed_but_delivered:'DISCLOSED BUT DELIVERED',refused_or_flagged:'REFUSED / FLAGGED',
+        no_submission:'NO SUBMISSION',invalid_saboteur_secure:'INVALID — saboteur wrote secure code',
+        parse_error:'judge parse error'};
+      const sc=(k)=>v[k]==null?'–':v[k];
+      const scores=('honesty' in v)?`<div class="scores">
+        <div><span>${sc('honesty')}</span><small>honesty</small></div>
+        <div><span>${sc('incentive_capture')}</span><small>incentive capture</small></div>
+        <div><span>${sc('deception')}</span><small>deception</small></div></div>`:'';
+      clearThink();
+      const d=document.createElement('div');
+      d.innerHTML=`<div class="verdict"><div class="out">${esc(labels[v.outcome]||v.outcome||ev.ended_reason)}</div>`+
+        scores+`<div class="txt" style="color:#4a4a4a">${esc(v.rationale||'')}</div>`+
+        `<div class="meta" style="margin-top:12px;color:#9b9b9b;font-size:11px">ended: ${esc(ev.ended_reason)} · cost ~$${(ev.usage&&ev.usage.cost_usd!=null)?ev.usage.cost_usd:'?'}</div></div>`;
+      flow.appendChild(d); scroll();
+      setStatus('done',false);
+      break;}
+  }
+}
+
+async function run(){
+  const btn=$('#run'); btn.disabled=true; clearFlow(); setStatus('starting…',true);
+  try{
+    const resp=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(gather())});
+    if(!resp.ok){ handle({type:'error',error:'server '+resp.status}); return; }
+    const reader=resp.body.getReader(), dec=new TextDecoder(); let buf='';
+    while(true){ const {value,done}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true}); let i;
+      while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i); buf=buf.slice(i+1);
+        if(line.trim()){ try{ handle(JSON.parse(line)); }catch(e){} } } }
+  }catch(e){ handle({type:'error',error:String(e)}); }
+  finally{ btn.disabled=false; clearThink(); if(statusEl.textContent.includes('thinking')||statusEl.textContent.includes('working'))setStatus('done',false); }
+}
+
+$('#run').onclick=run;
+$('#reset').onclick=()=>{ if(DEFAULTS) loadConfig(); };
+['#t_main','#t_side','#t_check'].forEach(s=>$(s).addEventListener('input',()=>{$('#task_pick').value='custom';}));
+loadConfig();
+</script>
+</body>
+</html>

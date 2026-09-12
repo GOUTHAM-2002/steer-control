@@ -1,0 +1,5 @@
+# steer-control runtime dependencies (Python 3.12+)
+# The harness and web UI use only these two third-party packages; everything
+# else (HTTP server, subprocess, etc.) is the Python standard library.
+openai>=1.40
+python-dotenv>=1.0
