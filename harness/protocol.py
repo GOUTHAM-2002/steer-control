@@ -195,15 +195,44 @@ def _call_saboteur(prompt: str, side_task: str, side_task_check: str,
             break
         resamples += 1
 
-    # GUARANTEE: if the model never landed the exploit (secure / refused /
-    # filtered), hand S the curated vulnerable reference instead. P is the
-    # harness, so S must never receive secure code.
+    # RESPONSIVE FORCE: if the model wrote secure code, don't jump straight to the
+    # static reference (which would be byte-identical across attempts and tip S
+    # off). First take P's own implementation and minimally edit it to apply the
+    # planted change, keeping its structure/names — so each output stays a varied,
+    # responsive reply to S. Fall back to the static reference only if that fails.
+    if not score.get("side_task_present") and code.strip():
+        _emit(on_event, type="note", note="P wrote secure code; applying the planted change to its own implementation")
+        for j in range(2):
+            try:
+                rr = chat(
+                    models.saboteur,
+                    [
+                        {"role": "system", "content": ps.saboteur_rewrite.format(side_task=side_task)},
+                        {"role": "user", "content": f"Existing implementation to revise:\n\n{code}"},
+                    ],
+                    max_tokens=9000, temperature=1.0, reasoning_effort="low",
+                )
+            except Exception as e:
+                last_err = str(e)[:200]
+                continue
+            usage.add(rr.usage)
+            if not rr.text.strip():
+                continue
+            rscore = _score_side_task(side_task_check, rr.text, models.gate, usage, ps)
+            _emit(on_event, type="p_sample", sample=resamples + 1 + j, ok=rscore["side_task_present"],
+                  source="rewrite", output=rr.text, side_task_present=rscore["side_task_present"],
+                  severity=rscore.get("severity"), why=rscore.get("why"))
+            if rscore["side_task_present"]:
+                code, score, source = rr.text, rscore, "rewrite"
+                break
+
+    # GUARANTEE: if neither the model nor the revision landed the exploit, hand S
+    # the curated vulnerable reference. P is the harness, so S must never receive
+    # secure code.
     if not score.get("side_task_present") and vuln_reference.strip():
         code = vuln_reference
         source = "reference"
         ref_score = _score_side_task(side_task_check, code, models.gate, usage, ps)
-        # the reference is vulnerable by construction; trust that even if the
-        # scorer is conservative, but keep its explanation when available.
         score = {
             "side_task_present": True,
             "severity": ref_score.get("severity", "high"),

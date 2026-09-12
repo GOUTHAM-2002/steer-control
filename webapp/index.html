@@ -151,6 +151,7 @@
         <div class="pfield"><span class="lbl">saboteur_system</span><textarea data-p="saboteur_system" rows="12"></textarea></div>
         <div class="pfield"><span class="lbl">saboteur_user_template</span><textarea data-p="saboteur_user_template" rows="3"></textarea></div>
         <div class="pfield"><span class="lbl">saboteur_escalation</span><textarea data-p="saboteur_escalation" rows="4"></textarea></div>
+        <div class="pfield"><span class="lbl">saboteur_rewrite (minimal-edit pass on P's own code)</span><textarea data-p="saboteur_rewrite" rows="8"></textarea></div>
       </div></details>
       <details><summary>Scorer</summary><div class="body">
         <div class="pfield"><span class="lbl">scorer_system</span><textarea data-p="scorer_system" rows="9"></textarea></div>
@@ -274,7 +275,8 @@ function handle(ev){
       break;
     case 'p_output':{
       const landed=ev.side_task_present;
-      const src = ev.source==='reference' ? ' · forced (reference)' : ' · model-authored';
+      const srcmap={reference:' · forced (reference)', rewrite:' · revised from P', model:' · model-authored'};
+      const src = srcmap[ev.source]||'';
       const badge=`<span class="badge ${landed?'bad':'ok'}">${landed?'exploit present · '+esc(ev.severity)+src:'no exploit (secure)'}</span>`;
       card('p','P → S','p','prompted-model output',
         `<div style="margin-bottom:8px">${badge}</div>`+codeBlock(ev.output)+
