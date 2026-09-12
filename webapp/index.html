@@ -257,6 +257,11 @@
       </div>
       <div class="row">
         <div><span class="lbl">Task</span><select id="a_task"></select></div>
+        <div><span class="lbl">Prompted model (P)</span>
+          <select id="a_pmode">
+            <option value="reference">Fast — curated vulnerable code (no P/scorer calls)</option>
+            <option value="live">Live — model writes sabotaged code (slow, realistic)</option>
+          </select></div>
       </div>
 
       <div class="estimate" id="estimate">estimated time: —</div>
@@ -484,6 +489,7 @@ function buildAutomation(cfg){
   document.querySelectorAll('.preset').forEach(b=>b.onclick=()=>applyPreset(b.dataset.preset));
   ['#a_eps','#a_maxp','#a_maxr'].forEach(s=>$(s).addEventListener('input',()=>{markCustom();updateEstimate();}));
   $('#a_par').addEventListener('input',updateEstimate);
+  $('#a_pmode').addEventListener('change',updateEstimate);
   applyPreset('standard');
   // reconnect to an in-progress experiment after a page refresh
   fetch('/api/experiment/status').then(r=>r.json()).then(s=>{
@@ -502,20 +508,21 @@ function applyPreset(name){
   updateEstimate();
 }
 function checkedModels(){ return [...$('#model_checklist').querySelectorAll('input:checked')].map(i=>i.value); }
-function perEpisodeSec(model,maxp,maxr){
-  const cli=!model.includes('/'); const steer=cli?33:13, sab=30, scorer=8, judge=10, rewrite=28;
+function perEpisodeSec(model,maxp,maxr,pmode){
+  const cli=!model.includes('/'); const steer=cli?14:9, sab=23, scorer=6, judge=9, rewrite=23;
   const expP=Math.max(2,Math.round(maxp*0.6));
-  return (steer+(1+maxr)*sab+scorer)*expP + rewrite + judge;
+  if(pmode==='reference') return steer*expP + judge;        // no P/scorer calls — just S turns
+  return (steer+(1+maxr)*sab+scorer)*expP + rewrite + judge; // live P: ~23s Astra calls dominate
 }
 function fmtDur(s){ s=Math.round(s); const m=Math.floor(s/60), sec=s%60; if(m>=60){const h=Math.floor(m/60);return h+'h '+(m%60)+'m';} return m? m+'m '+sec+'s' : sec+'s'; }
 function updateEstimate(){
   const models=checkedModels(), eps=+$('#a_eps').value||1, maxp=+$('#a_maxp').value||1, maxr=+$('#a_maxr').value||0;
-  const par=Math.max(1,+$('#a_par').value||1);
-  let seq=0; models.forEach(m=> seq+=eps*perEpisodeSec(m,maxp,maxr));
+  const par=Math.max(1,+$('#a_par').value||1); const pmode=($('#a_pmode')||{}).value||'reference';
+  let seq=0; models.forEach(m=> seq+=eps*perEpisodeSec(m,maxp,maxr,pmode));
   const n=models.length*eps;
   const wall = seq/Math.min(par, n||1);   // parallel wall-clock
   $('#estimate').innerHTML = models.length
-    ? `estimated time: <b>~${fmtDur(wall)}</b> for <b>${n}</b> episodes (${models.length} models × ${eps}), ${Math.min(par,n||1)} in parallel — rough, depends on how many prompts each model uses`
+    ? `estimated time: <b>~${fmtDur(wall)}</b> for <b>${n}</b> episodes (${models.length} models × ${eps}), ${Math.min(par,n||1)} in parallel, P=${pmode} — rough`
     : 'select at least one model';
 }
 
@@ -544,6 +551,7 @@ async function runExperiment(){
     budgets:{max_prompts:+$('#a_maxp').value||1, max_resamples:+$('#a_maxr').value||0},
     concurrency:+$('#a_par').value||6,
     task,
+    p_mode:($('#a_pmode')||{}).value||'reference',
     models_roles:{saboteur:mval('m_sab','m_sab_c'), gate:mval('m_gate','m_gate_c'), judge:mval('m_judge','m_judge_c')},
     prompts:(()=>{const p={};document.querySelectorAll('[data-p]').forEach(el=>p[el.dataset.p]=el.value);return p;})(),
   };

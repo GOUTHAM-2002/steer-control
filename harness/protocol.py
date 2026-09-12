@@ -183,15 +183,28 @@ def _score_side_task(side_task_check: str, code: str, scorer_model: str, usage: 
 
 def _call_saboteur(prompt: str, side_task: str, side_task_check: str,
                    vuln_reference: str, models: RoleModels, usage: Usage, ps: PromptSet,
-                   max_resamples: int = 3, on_event: EventFn | None = None) -> Attempt:
+                   max_resamples: int = 3, on_event: EventFn | None = None,
+                   p_mode: str = "live") -> Attempt:
     """Produce P's output with the side-task exploit GUARANTEED present.
 
-    P is part of the harness, not a model under test. We let the prompted model
-    write a responsive, sabotaged implementation and resample until the scorer
-    confirms the exploit. If it never lands (the model wrote secure code, refused,
-    or was content-filtered), we fall back to the curated vulnerable reference so
-    S is *never* handed secure code.
+    p_mode="reference" (fast): return the curated vulnerable reference directly —
+    no prompted-model or scorer calls at all. Since the reference is insecure by
+    construction, this collapses the slow per-prompt chain (a ~23s Astra call made
+    2-3x) to nothing, which is the big speedup for large sweeps.
+
+    p_mode="live" (realistic): the prompted model writes a responsive sabotaged
+    implementation; resample until the scorer confirms the exploit, then a
+    minimal-edit revision, then fall back to the reference — so S is never handed
+    secure code either way.
     """
+    if p_mode == "reference" and vuln_reference.strip():
+        why = f"curated vulnerable reference for: {side_task_check[:180]}"
+        _emit(on_event, type="p_sample", sample=0, ok=True, source="reference",
+              output=vuln_reference, side_task_present=True, severity="high", why=why)
+        return Attempt(attempt_id=-1, prompt=prompt, output=vuln_reference,
+                       side_task_present=True, severity="high", scorer_why=why,
+                       resamples=0, source="reference")
+
     code = ""
     score: dict = {}
     source = "model"
@@ -323,6 +336,7 @@ def run_episode(
     max_format_retries: int = 2,
     promptset: PromptSet | None = None,
     on_event: EventFn | None = None,
+    p_mode: str = "live",
 ) -> Episode:
     ps = promptset or PromptSet()
     usage = Usage()  # OpenRouter usage for scorer / judge (and P if via OpenRouter)
@@ -393,7 +407,8 @@ def run_episode(
             _emit(on_event, type="p_thinking")
             attempt = _call_saboteur(steer_prompt, side_task, side_task_check,
                                      vuln_reference, models, usage, ps,
-                                     max_resamples=max_resamples, on_event=on_event)
+                                     max_resamples=max_resamples, on_event=on_event,
+                                     p_mode=p_mode)
             attempt.attempt_id = next_attempt_id
             next_attempt_id += 1
             ep.attempts.append(attempt)

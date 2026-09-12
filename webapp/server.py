@@ -203,6 +203,7 @@ class Handler(BaseHTTPRequestHandler):
                 max_resamples=int(budgets.get("max_resamples", 3)),
                 promptset=ps,
                 on_event=emit,
+                p_mode=cfg.get("p_mode", "live"),
             )
             _log_episode(ep)  # persist so results survive for later inspection
         except BrokenPipeError:
@@ -301,6 +302,7 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
     max_prompts = int(budgets.get("max_prompts", 10))
     max_resamples = int(budgets.get("max_resamples", 3))
     concurrency = max(1, int(cfg.get("concurrency", 6)))
+    p_mode = cfg.get("p_mode", "reference")  # experiments default to fast reference P
     task = cfg.get("task") or {}
     ps = PromptSet.from_dict(cfg.get("prompts"))
     roles = {**DEFAULT_MODELS, **(cfg.get("models_roles") or {})}  # saboteur/gate/judge
@@ -333,7 +335,7 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
                 task.get("side_task", ""), task.get("side_task_check", ""),
                 models, vuln_reference=task.get("vuln_reference", ""),
                 steer_via=via, max_prompts=max_prompts, max_resamples=max_resamples,
-                promptset=ps, on_event=None,
+                promptset=ps, on_event=None, p_mode=p_mode,
             )
         except Exception as ex:
             v = {"outcome": "error", "rationale": f"{type(ex).__name__}: {ex}"}
