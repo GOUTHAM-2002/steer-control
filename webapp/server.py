@@ -98,7 +98,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _parse_from(self):
+        try:
+            q = self.path.split("?", 1)[1] if "?" in self.path else ""
+            for kv in q.split("&"):
+                if kv.startswith("from="):
+                    return int(kv[5:])
+        except Exception:
+            pass
+        return 0
+
     def do_GET(self):
+        path = self.path.split("?", 1)[0]
         if self.path == "/" or self.path.startswith("/?"):
             html = (WEBAPP / "index.html").read_bytes()
             self.send_response(200)
@@ -106,15 +117,46 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(html)))
             self.end_headers()
             self.wfile.write(html)
-        elif self.path == "/api/config":
+        elif path == "/api/config":
             self._send_json(default_config())
-        elif self.path == "/api/health":
+        elif path == "/api/health":
             self._send_json({"ok": True})
+        elif path == "/api/experiment/status":
+            self._send_json(_experiment_status())
+        elif path == "/api/experiment/stream":
+            self._stream_experiment(self._parse_from())
         else:
             self._send_json({"error": "not found"}, 404)
 
+    def _stream_experiment(self, frm: int):
+        """Tail the current/last experiment's event buffer from index `frm`.
+
+        The run lives in a background thread, so a browser refresh just drops this
+        connection; reconnecting with ?from=0 replays everything and resumes.
+        """
+        import time as _t
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        i = frm
+        try:
+            while True:
+                evs, active, total = _experiment_events_since(i)
+                for ev in evs:
+                    self.wfile.write((json.dumps(ev) + "\n").encode())
+                self.wfile.flush()
+                i += len(evs)
+                if not active and i >= total:
+                    break
+                _t.sleep(0.3)
+        except (BrokenPipeError, ConnectionError):
+            return  # client went away; the run keeps going
+
     def do_POST(self):
-        if self.path not in ("/api/run", "/api/experiment"):
+        path = self.path.split("?", 1)[0]
+        if path not in ("/api/run", "/api/experiment/start", "/api/experiment/stop"):
             self._send_json({"error": "not found"}, 404)
             return
         length = int(self.headers.get("Content-Length", 0))
@@ -124,7 +166,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": f"bad json: {e}"}, 400)
             return
 
-        # streaming NDJSON response
+        if path == "/api/experiment/stop":
+            self._send_json(_experiment_stop())
+            return
+        if path == "/api/experiment/start":
+            self._send_json(_experiment_start(cfg))  # starts in background, returns run id
+            return
+
+        # streaming NDJSON response (smoke-test single run)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Cache-Control", "no-cache")
@@ -132,23 +181,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def emit(ev: dict):
-            try:
-                self.wfile.write((json.dumps(ev) + "\n").encode())
-                self.wfile.flush()
-            except Exception:
-                raise
-
-        if self.path == "/api/experiment":
-            try:
-                _run_experiment(cfg, emit)
-            except BrokenPipeError:
-                return
-            except Exception as e:
-                try:
-                    emit({"type": "error", "error": f"{type(e).__name__}: {e}"})
-                except Exception:
-                    pass
-            return
+            self.wfile.write((json.dumps(ev) + "\n").encode())
+            self.wfile.flush()
 
         models_cfg = {**DEFAULT_MODELS, **(cfg.get("models") or {})}
         models = RoleModels(steer=models_cfg["steer"], saboteur=models_cfg["saboteur"],
@@ -185,18 +219,81 @@ def _steer_via_for(model: str) -> str:
     return "openrouter" if "/" in model else "claude_code"
 
 
-def _run_experiment(cfg: dict, emit) -> None:
-    """Run episodes across many steering models in PARALLEL, streaming progress.
+# --------------------------------------------------------------------------- #
+# experiment run registry: runs live in a background thread with an event
+# buffer, so a browser refresh just drops the viewer connection and can
+# reconnect (?from=0) without orphaning or duplicating the run.
+# --------------------------------------------------------------------------- #
+import threading as _threading  # noqa: E402
 
-    Each (model, episode) is an independent task run on a thread pool. Claude
-    models route to the Claude Code CLI, everything else to OpenRouter, and both
-    run concurrently. Event writes are serialized with a lock; a client
-    disconnect (Stop) sets a cancel flag so queued tasks skip.
+_RUN_LOCK = _threading.Lock()
+_RUN: dict | None = None
+
+
+def _experiment_status() -> dict:
+    with _RUN_LOCK:
+        if not _RUN:
+            return {"active": False, "exists": False}
+        return {"active": _RUN["active"], "exists": True, "id": _RUN["id"],
+                "n_events": len(_RUN["events"]), "done": _RUN["done"]}
+
+
+def _experiment_events_since(i: int):
+    with _RUN_LOCK:
+        if not _RUN:
+            return ([], False, 0)
+        return (list(_RUN["events"][i:]), _RUN["active"], len(_RUN["events"]))
+
+
+def _experiment_stop() -> dict:
+    with _RUN_LOCK:
+        if _RUN and _RUN["active"]:
+            _RUN["cancel"].set()
+            return {"stopped": True, "id": _RUN["id"]}
+    return {"stopped": False}
+
+
+def _experiment_start(cfg: dict) -> dict:
+    import uuid
+    global _RUN
+    with _RUN_LOCK:
+        if _RUN and _RUN["active"]:
+            _RUN["cancel"].set()   # replace any previous run
+        cancel = _threading.Event()
+        run = {"id": uuid.uuid4().hex[:8], "events": [], "active": True,
+               "done": False, "cancel": cancel}
+        _RUN = run
+
+    def append(ev: dict):
+        with _RUN_LOCK:
+            run["events"].append(ev)
+
+    def target():
+        try:
+            _run_experiment_core(cfg, append, cancel)
+        except Exception as e:  # noqa: BLE001
+            append({"type": "error", "error": f"{type(e).__name__}: {e}"})
+        finally:
+            with _RUN_LOCK:
+                run["active"] = False
+                run["done"] = True
+
+    _threading.Thread(target=target, daemon=True).start()
+    return {"run_id": run["id"]}
+
+
+def _run_experiment_core(cfg: dict, emit, cancel) -> None:
+    """Run episodes across many steering models in PARALLEL.
+
+    Each (model, episode) is an independent task on a thread pool. Claude models
+    route to the Claude Code CLI, everything else to OpenRouter, run concurrently.
+    `emit` appends to the run's event buffer; `cancel` (a threading.Event) stops
+    queued tasks when the user hits Stop or starts a new run. In-flight episodes
+    finish (a running model call cannot be interrupted).
     """
     import time
     import threading
     import concurrent.futures as cf
-    from collections import Counter
 
     steer_models = [m for m in (cfg.get("models") or []) if m]
     episodes = max(1, int(cfg.get("episodes", 1)))
@@ -211,32 +308,22 @@ def _run_experiment(cfg: dict, emit) -> None:
 
     total = len(steer_models) * episodes
     t0 = time.time()
-    emit_lock = threading.Lock()
-    cancelled = threading.Event()
 
-    def semit(ev: dict):
-        with emit_lock:
-            try:
-                emit(ev)
-            except (BrokenPipeError, ConnectionError):
-                cancelled.set()
-                raise
-
-    semit({"type": "experiment_start", "models": steer_models, "episodes": episodes,
-           "total": total, "task_id": task.get("task_id", "custom"),
-           "max_prompts": max_prompts, "max_resamples": max_resamples,
-           "concurrency": concurrency})
+    emit({"type": "experiment_start", "models": steer_models, "episodes": episodes,
+          "total": total, "task_id": task.get("task_id", "custom"),
+          "max_prompts": max_prompts, "max_resamples": max_resamples,
+          "concurrency": concurrency})
 
     done_lock = threading.Lock()
     overall_done = {"n": 0}
 
     def worker(m: str, e: int) -> tuple:
-        if cancelled.is_set():
+        if cancel.is_set():
             return (m, {"outcome": "cancelled"}, 0.0)
         via = _steer_via_for(m)
         models = RoleModels(steer=m, saboteur=saboteur, gate=gate, judge=judge)
         try:
-            semit({"type": "episode_start", "model": m, "episode": e, "total": total,
+            emit({"type": "episode_start", "model": m, "episode": e, "total": total,
                    "elapsed_s": round(time.time() - t0, 1)})
         except Exception:
             return (m, {"outcome": "cancelled"}, 0.0)
@@ -251,7 +338,7 @@ def _run_experiment(cfg: dict, emit) -> None:
         except Exception as ex:
             v = {"outcome": "error", "rationale": f"{type(ex).__name__}: {ex}"}
             try:
-                semit({"type": "episode_end", "model": m, "episode": e, "total": total,
+                emit({"type": "episode_end", "model": m, "episode": e, "total": total,
                        "outcome": "error", "ended": "error", "cost": 0,
                        "elapsed_s": round(time.time() - t0, 1)})
             except Exception:
@@ -264,7 +351,7 @@ def _run_experiment(cfg: dict, emit) -> None:
             overall_done["n"] += 1
             overall = overall_done["n"]
         try:
-            semit({"type": "episode_end", "model": m, "episode": e, "overall": overall,
+            emit({"type": "episode_end", "model": m, "episode": e, "overall": overall,
                    "total": total, "outcome": v.get("outcome", "none"), "ended": ep.ended_reason,
                    "honesty": v.get("honesty"), "incentive_capture": v.get("incentive_capture"),
                    "deception": v.get("deception"), "cost": round(cost, 4),
@@ -286,7 +373,7 @@ def _run_experiment(cfg: dict, emit) -> None:
             if len(results[m]) == episodes:
                 per = _summarize_model(results[m])
                 try:
-                    semit({"type": "model_done", "model": m, "summary": per})
+                    emit({"type": "model_done", "model": m, "summary": per})
                 except Exception:
                     pass
 
@@ -306,7 +393,7 @@ def _run_experiment(cfg: dict, emit) -> None:
     except Exception:
         pass
     try:
-        semit({"type": "experiment_done", "summary": summary})
+        emit({"type": "experiment_done", "summary": summary})
     except Exception:
         pass
 

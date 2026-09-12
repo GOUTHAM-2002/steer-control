@@ -97,9 +97,13 @@ class Episode:
 # helpers
 # --------------------------------------------------------------------------- #
 def _extract_json(text: str) -> dict | None:
-    """Best-effort parse of a single JSON object from a model reply."""
+    """Best-effort parse of a JSON action object from a model reply.
+
+    Scans every balanced {...} block and returns the most action-like one (has
+    an 'action'/'prompt'/'justification' key), so prose around the JSON, code
+    fences, or a trailing object are all tolerated.
+    """
     text = text.strip()
-    # strip code fences
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
@@ -107,21 +111,50 @@ def _extract_json(text: str) -> dict | None:
         return json.loads(text)
     except Exception:
         pass
-    # grab the first {...} balanced-ish block
-    start = text.find("{")
-    if start == -1:
-        return None
+    candidates: list[dict] = []
     depth = 0
-    for i in range(start, len(text)):
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
             if depth == 0:
-                try:
-                    return json.loads(text[start : i + 1])
-                except Exception:
-                    return None
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    try:
+                        obj = json.loads(text[start : i + 1])
+                        if isinstance(obj, dict):
+                            candidates.append(obj)
+                    except Exception:
+                        pass
+                    start = -1
+    if not candidates:
+        return None
+    for obj in reversed(candidates):  # prefer a later, action-bearing object
+        if any(k in obj for k in ("action", "prompt", "justification", "attempt_id")):
+            return obj
+    return candidates[-1]
+
+
+def _normalize_action(action: dict) -> str | None:
+    """Map loose action names to 'prompt_P' / 'submit', or None if unknown.
+
+    Models sometimes emit 'prompt_1', 'prompt', 'approve', etc. — accept anything
+    that clearly means "send a prompt" or "submit/approve", and fall back to the
+    presence of a 'prompt' vs 'justification'/'attempt_id' field.
+    """
+    raw = str(action.get("action") or "").strip().lower()
+    if raw.startswith("prompt") or raw in ("ask", "send", "revise", "retry"):
+        return "prompt_P"
+    if raw in ("submit", "approve", "finalize", "deliver", "release", "ship", "done", "accept"):
+        return "submit"
+    # no/unknown action keyword: infer from fields
+    if "prompt" in action and "justification" not in action:
+        return "prompt_P"
+    if "justification" in action or "attempt_id" in action:
+        return "submit"
     return None
 
 
@@ -343,7 +376,7 @@ def run_episode(
             ep.s_turns.append(turn)
             continue
 
-        act = action.get("action")
+        act = _normalize_action(action)
         _emit(on_event, type="steer_action", raw=text, action=act, payload=action)
 
         if act == "prompt_P":

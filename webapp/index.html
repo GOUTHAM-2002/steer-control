@@ -478,6 +478,10 @@ function buildAutomation(cfg){
   ['#a_eps','#a_maxp','#a_maxr'].forEach(s=>$(s).addEventListener('input',()=>{markCustom();updateEstimate();}));
   $('#a_par').addEventListener('input',updateEstimate);
   applyPreset('standard');
+  // reconnect to an in-progress experiment after a page refresh
+  fetch('/api/experiment/status').then(r=>r.json()).then(s=>{
+    if(s && s.active){ showTab('auto'); $('#autoprog').hidden=false; streamExperiment(0); }
+  }).catch(()=>{});
 }
 function markCustom(){ document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.preset==='custom')); $('#preset_desc').textContent=PRESETS.custom.desc; }
 function applyPreset(name){
@@ -508,12 +512,13 @@ function updateEstimate(){
     : 'select at least one model';
 }
 
-let actrl=null, aGrid={}, expState=null;
+let astream=null, aGrid={}, expState=null;
 function setA(t,live){ $('#a_status').innerHTML=`<span class="dot${live?' live':''}"></span>${esc(t)}`; }
 function updateCounters(){
-  if(!expState)return; const el=Date.now()-expState.t0, done=expState.done, total=expState.total;
-  const rate=done? el/done : 0, remain=rate*(total-done);
-  $('#a_counters').innerHTML=`<b>${done}</b> / ${total} episodes · elapsed <b>${fmtDur(el/1000)}</b>`+((done&&done<total)?` · ~${fmtDur(remain/1000)} remaining`:'');
+  if(!expState)return; const done=expState.done, total=expState.total, el=expState.elapsed||0;
+  const par=Math.max(1,expState.concurrency||1);
+  const rate=done? el/done : 0, remain=rate*(total-done)/par;
+  $('#a_counters').innerHTML=`<b>${done}</b> / ${total} episodes · elapsed <b>${fmtDur(el)}</b>`+((done&&done<total)?` · ~${fmtDur(remain)} remaining`:'');
 }
 function buildLegend(){ $('#a_legend').innerHTML=OUTCOME_ORDER.map(o=>`<span><i style="background:${OUTCOME_FILL[o]}"></i>${OUTCOME_LABELS[o]}</span>`).join(''); }
 
@@ -530,21 +535,34 @@ async function runExperiment(){
   };
   $('#a_run').disabled=true; $('#a_stop').disabled=false;
   $('#autoprog').hidden=false; $('#autoresults').hidden=true; $('#a_charts').innerHTML='';
-  setA('starting…',true); actrl=new AbortController();
+  setA('starting…',true);
   try{
-    const resp=await fetch('/api/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg),signal:actrl.signal});
-    if(!resp.ok){ $('#a_counters').textContent='server '+resp.status; return; }
+    const r=await fetch('/api/experiment/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    const j=await r.json();
+    if(!j.run_id){ setA('failed to start',false); $('#a_run').disabled=false; $('#a_stop').disabled=true; return; }
+    streamExperiment(0);   // the run lives server-side; this just tails its events
+  }catch(e){ setA('error',false); $('#a_run').disabled=false; $('#a_stop').disabled=true; }
+}
+// Tail the server-side run's event buffer from index `from`. A page refresh just
+// drops this reader; reconnecting with from=0 replays everything and resumes.
+async function streamExperiment(from){
+  if(astream) astream.abort();
+  astream=new AbortController();
+  $('#a_run').disabled=true; $('#a_stop').disabled=false;
+  try{
+    const resp=await fetch('/api/experiment/stream?from='+from,{signal:astream.signal});
     const reader=resp.body.getReader(), dec=new TextDecoder(); let buf='';
     while(true){ const {value,done}=await reader.read(); if(done)break;
       buf+=dec.decode(value,{stream:true}); let i;
       while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i); buf=buf.slice(i+1); if(line.trim()){ try{handleExp(JSON.parse(line));}catch(e){} } } }
-  }catch(e){ if(e&&e.name==='AbortError') setA('stopped',false); else $('#a_counters').textContent='error: '+e; }
-  finally{ $('#a_run').disabled=false; $('#a_stop').disabled=true; actrl=null; }
+  }catch(e){ /* aborted or connection dropped; run continues on the server */ }
+  finally{ $('#a_run').disabled=false; $('#a_stop').disabled=true; astream=null; }
 }
 function handleExp(ev){
   switch(ev.type){
     case 'experiment_start':{
-      expState={total:ev.total,done:0,t0:Date.now()};
+      expState={total:ev.total,done:0,elapsed:0,concurrency:ev.concurrency||1};
+      $('#autoprog').hidden=false; $('#autoresults').hidden=true; $('#a_charts').innerHTML='';
       const g=$('#a_grid'); g.innerHTML=''; aGrid={};
       ev.models.forEach(m=>{
         const row=document.createElement('div'); row.className='gridrow';
@@ -554,11 +572,11 @@ function handleExp(ev){
         row.appendChild(name); row.appendChild(cells); g.appendChild(row); aGrid[m]=arr;
       });
       buildLegend(); setA('running',true); updateCounters(); break;}
-    case 'episode_start':{ const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode]; if(c)c.classList.add('running'); setA('running '+ev.model,true); break;}
+    case 'episode_start':{ const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode]; if(c&&!c.classList.contains('done'))c.classList.add('running'); if(ev.elapsed_s!=null)expState.elapsed=ev.elapsed_s; setA('running '+ev.model,true); break;}
     case 'episode_end':{
       const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode];
-      if(c){ c.classList.remove('running'); c.classList.add(ev.outcome); c.title=`${ev.model} #${ev.episode}: ${OUTCOME_LABELS[ev.outcome]||ev.outcome}`; }
-      expState.done++; updateCounters(); break;}
+      if(c){ c.classList.remove('running'); c.classList.add('done'); c.classList.add(ev.outcome); c.title=`${ev.model} #${ev.episode}: ${OUTCOME_LABELS[ev.outcome]||ev.outcome}`; }
+      expState.done++; if(ev.elapsed_s!=null)expState.elapsed=ev.elapsed_s; updateCounters(); break;}
     case 'experiment_done':{ setA('done',false); renderCharts(ev.summary); $('#autoresults').hidden=false; break;}
     case 'error':{ $('#a_counters').innerHTML+='<br>error: '+esc(ev.error); setA('error',false); break;}
   }
@@ -591,7 +609,7 @@ function rateBars(models,sum){
   return s+'</svg>';
 }
 $('#a_run').onclick=runExperiment;
-$('#a_stop').onclick=()=>{ if(actrl){ actrl.abort(); setA('stopping…',false); } };
+$('#a_stop').onclick=async()=>{ setA('stopping…',false); try{ await fetch('/api/experiment/stop',{method:'POST'}); }catch(e){} };
 ['#t_main','#t_side','#t_check','#t_ref'].forEach(s=>$(s).addEventListener('input',()=>{$('#task_pick').value='custom';}));
 loadConfig();
 </script>
