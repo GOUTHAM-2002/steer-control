@@ -54,6 +54,11 @@
   .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:11px;color:var(--mid)}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .legend i{width:12px;height:12px;border:1px solid var(--line);border-radius:2px;display:inline-block}
+  .elog{margin-top:8px;max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:2px;
+    background:#fcfcfc;padding:8px 10px;font-family:var(--mono);font-size:11px;line-height:1.7}
+  .elog div{white-space:pre-wrap;color:#555}
+  .elog div.err{color:#9b1c1c}
+  .elog div.ok{color:#1a1a1a}
   .chart{margin:10px 0 26px}
   .chart h3{font-weight:300;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--mid);margin:0 0 12px}
   .left{border-right:1px solid var(--line);padding:22px 22px 80px}
@@ -266,6 +271,8 @@
       <div id="a_counters" class="counters"></div>
       <div id="a_grid"></div>
       <div id="a_legend" class="legend"></div>
+      <span class="lbl" style="display:block;margin-top:16px">Event log</span>
+      <div id="a_log" class="elog"></div>
     </div>
 
     <div class="autocard" id="autoresults" hidden style="margin-top:18px">
@@ -512,13 +519,20 @@ function updateEstimate(){
     : 'select at least one model';
 }
 
-let astream=null, aGrid={}, expState=null;
+let astream=null, aGrid={}, expState=null, expTicker=null;
 function setA(t,live){ $('#a_status').innerHTML=`<span class="dot${live?' live':''}"></span>${esc(t)}`; }
+function elapsedNow(){ if(!expState)return 0; return (expState.serverElapsed||0)+(Date.now()-(expState.anchor||Date.now()))/1000; }
+function setSrvElapsed(ev){ if(ev && ev.elapsed_s!=null && expState){ expState.serverElapsed=ev.elapsed_s; expState.anchor=Date.now(); } }
+function startTicker(){ stopTicker(); expTicker=setInterval(()=>{ if(expState) updateCounters(); }, 1000); }
+function stopTicker(){ if(expTicker){ clearInterval(expTicker); expTicker=null; } }
+function logLine(text,cls){ const l=$('#a_log'); if(!l)return; const d=document.createElement('div'); if(cls)d.className=cls;
+  d.textContent=`${new Date().toLocaleTimeString()}  ${text}`; l.appendChild(d);
+  while(l.children.length>300) l.removeChild(l.firstChild); l.scrollTop=l.scrollHeight; }
 function updateCounters(){
-  if(!expState)return; const done=expState.done, total=expState.total, el=expState.elapsed||0;
+  if(!expState)return; const done=expState.done, total=expState.total, el=elapsedNow(), inflight=expState.inflight||0;
   const par=Math.max(1,expState.concurrency||1);
   const rate=done? el/done : 0, remain=rate*(total-done)/par;
-  $('#a_counters').innerHTML=`<b>${done}</b> / ${total} episodes · elapsed <b>${fmtDur(el)}</b>`+((done&&done<total)?` · ~${fmtDur(remain)} remaining`:'');
+  $('#a_counters').innerHTML=`<b>${done}</b> / ${total} done · <b>${inflight}</b> running · elapsed <b>${fmtDur(el)}</b>`+((done&&done<total&&done>0)?` · ~${fmtDur(remain)} remaining`:'');
 }
 function buildLegend(){ $('#a_legend').innerHTML=OUTCOME_ORDER.map(o=>`<span><i style="background:${OUTCOME_FILL[o]}"></i>${OUTCOME_LABELS[o]}</span>`).join(''); }
 
@@ -556,14 +570,14 @@ async function streamExperiment(from){
       buf+=dec.decode(value,{stream:true}); let i;
       while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i); buf=buf.slice(i+1); if(line.trim()){ try{handleExp(JSON.parse(line));}catch(e){} } } }
   }catch(e){ /* aborted or connection dropped; run continues on the server */ }
-  finally{ $('#a_run').disabled=false; $('#a_stop').disabled=true; astream=null; }
+  finally{ $('#a_run').disabled=false; $('#a_stop').disabled=true; astream=null; stopTicker(); }
 }
 function handleExp(ev){
   switch(ev.type){
     case 'experiment_start':{
-      expState={total:ev.total,done:0,elapsed:0,concurrency:ev.concurrency||1};
+      expState={total:ev.total,done:0,inflight:0,serverElapsed:0,anchor:Date.now(),concurrency:ev.concurrency||1};
       $('#autoprog').hidden=false; $('#autoresults').hidden=true; $('#a_charts').innerHTML='';
-      const g=$('#a_grid'); g.innerHTML=''; aGrid={};
+      const g=$('#a_grid'); g.innerHTML=''; aGrid={}; $('#a_log').innerHTML='';
       ev.models.forEach(m=>{
         const row=document.createElement('div'); row.className='gridrow';
         const name=document.createElement('div'); name.className='name'; name.title=m; name.textContent=m;
@@ -571,14 +585,23 @@ function handleExp(ev){
         for(let e=0;e<ev.episodes;e++){ const c=document.createElement('div'); c.className='cell'; cells.appendChild(c); arr.push(c); }
         row.appendChild(name); row.appendChild(cells); g.appendChild(row); aGrid[m]=arr;
       });
-      buildLegend(); setA('running',true); updateCounters(); break;}
-    case 'episode_start':{ const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode]; if(c&&!c.classList.contains('done'))c.classList.add('running'); if(ev.elapsed_s!=null)expState.elapsed=ev.elapsed_s; setA('running '+ev.model,true); break;}
+      buildLegend(); setA('running',true); updateCounters(); startTicker();
+      logLine(`experiment started — ${ev.models.length} models × ${ev.episodes} episodes, ${ev.concurrency} in parallel`,'ok');
+      break;}
+    case 'episode_start':{
+      const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode]; if(c&&!c.classList.contains('done'))c.classList.add('running');
+      expState.inflight=(expState.inflight||0)+1; setSrvElapsed(ev); setA('running '+ev.model,true);
+      logLine(`▶ ${ev.model} #${ev.episode} started`); updateCounters(); break;}
     case 'episode_end':{
       const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode];
       if(c){ c.classList.remove('running'); c.classList.add('done'); c.classList.add(ev.outcome); c.title=`${ev.model} #${ev.episode}: ${OUTCOME_LABELS[ev.outcome]||ev.outcome}`; }
-      expState.done++; if(ev.elapsed_s!=null)expState.elapsed=ev.elapsed_s; updateCounters(); break;}
-    case 'experiment_done':{ setA('done',false); renderCharts(ev.summary); $('#autoresults').hidden=false; break;}
-    case 'error':{ $('#a_counters').innerHTML+='<br>error: '+esc(ev.error); setA('error',false); break;}
+      expState.done++; expState.inflight=Math.max(0,(expState.inflight||1)-1); setSrvElapsed(ev);
+      const bad = ev.outcome==='error'||ev.ended==='error';
+      logLine(`${ev.model} #${ev.episode} → ${OUTCOME_LABELS[ev.outcome]||ev.outcome}${ev.ended?' ('+ev.ended+')':''}`, bad?'err':'');
+      updateCounters(); break;}
+    case 'model_done':{ const s=ev.summary||{}; logLine(`✓ ${ev.model} complete — rubber-stamp ${Math.round((s.rubber_stamp_rate||0)*100)}% (n=${s.n})`,'ok'); break;}
+    case 'experiment_done':{ stopTicker(); setSrvElapsed({elapsed_s:(ev.summary&&ev.summary.wall_s)}); setA('done',false); renderCharts(ev.summary); $('#autoresults').hidden=false; logLine('experiment complete','ok'); updateCounters(); break;}
+    case 'error':{ logLine('⚠ '+ev.error,'err'); setA('error',false); break;}
   }
 }
 function renderCharts(sum){

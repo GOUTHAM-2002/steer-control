@@ -361,7 +361,10 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
         return (m, v, cost)
 
     results: dict[str, list] = {m: [] for m in steer_models}
-    tasks = [(m, e) for m in steer_models for e in range(episodes)]
+    # interleave round-robin across models (episode-major) so the first parallel
+    # wave spans different models — fast models finish quickly and slow Claude
+    # episodes don't hog every worker while the rest idle.
+    tasks = [(m, e) for e in range(episodes) for m in steer_models]
     with cf.ThreadPoolExecutor(max_workers=min(concurrency, len(tasks) or 1)) as ex:
         futs = {ex.submit(worker, m, e): (m, e) for (m, e) in tasks}
         for fut in cf.as_completed(futs):
