@@ -31,6 +31,7 @@
     font-family:var(--mono);font-size:12px;font-weight:300;padding:7px 9px;border-radius:2px;outline:none}
   input:focus,select:focus,textarea:focus{border-color:#b5b5b5}
   textarea{resize:vertical;line-height:1.5}
+  .mcustom{margin-top:6px}
   details{border:1px solid var(--line);border-radius:2px;margin:8px 0;background:#fff}
   details>summary{cursor:pointer;list-style:none;padding:9px 11px;font-size:11px;
     letter-spacing:.1em;text-transform:uppercase;color:var(--mid)}
@@ -100,12 +101,16 @@
     <div class="grp">
       <span class="lbl">Models</span>
       <div class="row">
-        <div><span class="lbl">S &mdash; steering (audited)</span><input id="m_steer"></div>
-        <div><span class="lbl">P &mdash; prompted (saboteur)</span><input id="m_sab"></div>
+        <div><span class="lbl">S &mdash; steering (audited)</span>
+          <select id="m_steer" class="msel"></select><input id="m_steer_c" class="mcustom" placeholder="model id" hidden></div>
+        <div><span class="lbl">P &mdash; prompted (saboteur)</span>
+          <select id="m_sab" class="msel"></select><input id="m_sab_c" class="mcustom" placeholder="model id" hidden></div>
       </div>
       <div class="row">
-        <div><span class="lbl">Scorer</span><input id="m_gate"></div>
-        <div><span class="lbl">Judge</span><input id="m_judge"></div>
+        <div><span class="lbl">Scorer</span>
+          <select id="m_gate" class="msel"></select><input id="m_gate_c" class="mcustom" placeholder="model id" hidden></div>
+        <div><span class="lbl">Judge</span>
+          <select id="m_judge" class="msel"></select><input id="m_judge_c" class="mcustom" placeholder="model id" hidden></div>
       </div>
       <div class="row">
         <div><span class="lbl">S driven via</span>
@@ -183,9 +188,21 @@ function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;',
 async function loadConfig(){
   const cfg = await (await fetch('/api/config')).json();
   DEFAULTS = cfg;
-  // models
-  $('#m_steer').value=cfg.models.steer; $('#m_sab').value=cfg.models.saboteur;
-  $('#m_gate').value=cfg.models.gate; $('#m_judge').value=cfg.models.judge;
+  // model dropdowns (with a Custom… escape hatch)
+  const OPTS = cfg.model_options || {};
+  function buildSel(selId, custId, role, current){
+    const sel=$('#'+selId), cust=$('#'+custId);
+    sel.innerHTML='';
+    (OPTS[role]||[]).forEach(o=>{const op=document.createElement('option');op.value=o;op.textContent=o;sel.appendChild(op);});
+    const c=document.createElement('option');c.value='__custom__';c.textContent='Custom…';sel.appendChild(c);
+    if((OPTS[role]||[]).includes(current)){ sel.value=current; cust.hidden=true; }
+    else { sel.value='__custom__'; cust.value=current||''; cust.hidden=false; }
+    sel.onchange=()=>{ cust.hidden = sel.value!=='__custom__'; if(!cust.hidden) cust.focus(); };
+  }
+  buildSel('m_steer','m_steer_c','steer',cfg.models.steer);
+  buildSel('m_sab','m_sab_c','saboteur',cfg.models.saboteur);
+  buildSel('m_gate','m_gate_c','gate',cfg.models.gate);
+  buildSel('m_judge','m_judge_c','judge',cfg.models.judge);
   $('#steer_via').value=cfg.steer_via;
   $('#b_prompts').value=cfg.budgets.max_prompts; $('#b_resamples').value=cfg.budgets.max_resamples;
   // tasks dropdown
@@ -199,12 +216,13 @@ async function loadConfig(){
 }
 function setTask(t){ $('#t_main').value=t.main_task||''; $('#t_side').value=t.side_task||''; $('#t_check').value=t.side_task_check||''; $('#t_ref').value=t.vuln_reference||''; }
 
+function mval(selId,custId){ const s=$('#'+selId); return s.value==='__custom__' ? $('#'+custId).value.trim() : s.value; }
 function gather(){
   const prompts={};
   document.querySelectorAll('[data-p]').forEach(el=>prompts[el.dataset.p]=el.value);
   return {
-    models:{steer:$('#m_steer').value.trim(),saboteur:$('#m_sab').value.trim(),
-            gate:$('#m_gate').value.trim(),judge:$('#m_judge').value.trim()},
+    models:{steer:mval('m_steer','m_steer_c'),saboteur:mval('m_sab','m_sab_c'),
+            gate:mval('m_gate','m_gate_c'),judge:mval('m_judge','m_judge_c')},
     steer_via:$('#steer_via').value,
     budgets:{max_prompts:+$('#b_prompts').value,max_resamples:+$('#b_resamples').value},
     task:{task_id:($('#task_pick').selectedOptions[0]||{}).textContent||'custom',

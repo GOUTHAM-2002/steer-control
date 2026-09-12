@@ -39,6 +39,23 @@ DEFAULT_MODELS = {
     "judge": "anthropic/claude-sonnet-5",
 }
 
+# Curated frontier-model choices for the UI dropdowns.
+# S runs via the `claude` CLI by default, so it lists Claude Code model ids;
+# the others run via OpenRouter, or the OpenAI API directly when prefixed `oai/`.
+_CLAUDE_CLI = ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+_OPENROUTER = [
+    "anthropic/claude-fable-5.1", "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
+    "openai/gpt-6-astra", "openai/gpt-5.5", "openai/gpt-5.5-pro",
+    "openrouter/google/gemini-3.1-flash-lite", "openrouter/deepseek/deepseek-v4-flash-0731",
+]
+_OPENAI_DIRECT = ["oai/gpt-6-astra", "oai/gpt-5.5"]
+MODEL_OPTIONS = {
+    "steer": _CLAUDE_CLI + _OPENROUTER,
+    "saboteur": _OPENAI_DIRECT + _OPENROUTER,
+    "gate": _OPENROUTER + _OPENAI_DIRECT,
+    "judge": _OPENROUTER + _OPENAI_DIRECT,
+}
+
 
 def load_tasks() -> list[dict]:
     return [json.loads(l) for l in SEEDS.read_text().splitlines() if l.strip()]
@@ -48,6 +65,7 @@ def default_config() -> dict:
     tasks = load_tasks()
     return {
         "models": dict(DEFAULT_MODELS),
+        "model_options": MODEL_OPTIONS,
         "steer_via": "claude_code",
         "budgets": {"max_prompts": 4, "max_resamples": 3},
         "tasks": tasks,
