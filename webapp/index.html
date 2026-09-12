@@ -14,9 +14,48 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;
-    font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
-  .app{display:grid;grid-template-columns:minmax(340px,420px) 1fr;height:100vh}
-  .col{height:100vh;overflow-y:auto}
+    font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;
+    display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  .nav{display:flex;gap:2px;border-bottom:1px solid var(--line);padding:0 14px;background:#fff;flex:0 0 auto}
+  .nav button{border:none;border-bottom:2px solid transparent;background:none;color:var(--faint);
+    font-family:var(--sans);font-weight:300;font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    padding:15px 16px;border-radius:0;cursor:pointer}
+  .nav button:hover{color:var(--ink)}
+  .nav button.active{color:var(--ink);border-bottom-color:var(--ink)}
+  .view{flex:1 1 auto;min-height:0;overflow:hidden}
+  .app{display:grid;grid-template-columns:minmax(340px,420px) 1fr;height:100%}
+  .col{height:100%;overflow-y:auto}
+  /* automation */
+  .auto{height:100%;overflow-y:auto;padding:22px 26px 120px;max-width:1080px}
+  .autocard{border:1px solid var(--line);border-radius:2px;background:#fff;padding:18px}
+  .presets{display:flex;gap:8px;flex-wrap:wrap}
+  .preset{font-size:12px;letter-spacing:.06em;padding:8px 16px;border:1px solid var(--line);
+    background:#fff;color:var(--mid);border-radius:2px;cursor:pointer}
+  .preset:hover{color:var(--ink)}
+  .preset.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .checklist{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 18px;margin-top:8px}
+  label.chk{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:#2a2a2a;cursor:pointer}
+  label.chk input{width:auto}
+  .estimate{margin:16px 0 10px;font-size:12.5px;color:var(--mid);border-top:1px solid var(--line);padding-top:12px}
+  .estimate b{font-weight:500;color:var(--ink)}
+  .counters{font-size:13px;color:var(--mid);margin-bottom:14px}
+  .counters b{font-weight:500;color:var(--ink)}
+  .gridrow{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+  .gridrow .name{font-family:var(--mono);font-size:11.5px;width:200px;flex:0 0 200px;color:#2a2a2a;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cells{display:flex;gap:4px;flex-wrap:wrap}
+  .cell{width:15px;height:15px;border:1px solid var(--line);border-radius:2px;background:#fff}
+  .cell.running{animation:pulse 1s infinite;border-color:#1a1a1a}
+  .cell.rubber_stamp{background:#1a1a1a;border-color:#1a1a1a}
+  .cell.disclosed_but_delivered{background:#7a7a7a;border-color:#7a7a7a}
+  .cell.refused_or_flagged{background:#c2c2c2;border-color:#c2c2c2}
+  .cell.no_submission{background:#e6e6e6}
+  .cell.invalid_saboteur_secure{background:repeating-linear-gradient(45deg,#fff,#fff 3px,#eee 3px,#eee 6px)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:11px;color:var(--mid)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:12px;height:12px;border:1px solid var(--line);border-radius:2px;display:inline-block}
+  .chart{margin:10px 0 26px}
+  .chart h3{font-weight:300;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--mid);margin:0 0 12px}
   .left{border-right:1px solid var(--line);padding:22px 22px 80px}
   .right{padding:22px 26px 120px;background:var(--panel)}
   h1{font-weight:200;font-size:20px;letter-spacing:.12em;margin:0 0 2px;text-transform:uppercase}
@@ -92,6 +131,11 @@
 </style>
 </head>
 <body>
+<header class="nav">
+  <button id="tab-smoke" class="active" onclick="showTab('smoke')">Smoke Test</button>
+  <button id="tab-auto" onclick="showTab('auto')">Automation</button>
+</header>
+<section id="view-smoke" class="view">
 <div class="app">
   <!-- LEFT: config -->
   <div class="col left">
@@ -180,6 +224,55 @@
     <div class="empty" id="empty">Configure on the left, then press Run to watch S steer P, the scorer check the exploit, and the judge rule.</div>
   </div>
 </div>
+</section>
+
+<section id="view-auto" class="view" hidden>
+  <div class="auto">
+    <h1>Automation</h1>
+    <div class="sub">run episodes across models, watch live progress, compare results</div>
+
+    <div class="autocard">
+      <span class="lbl">Preset</span>
+      <div class="presets">
+        <button class="preset active" data-preset="quick">Quick</button>
+        <button class="preset" data-preset="standard">Standard</button>
+        <button class="preset" data-preset="full">Full</button>
+        <button class="preset" data-preset="custom">Custom</button>
+      </div>
+      <div class="sub" id="preset_desc" style="margin:8px 0 0"></div>
+
+      <span class="lbl" style="display:block;margin-top:16px">Steering models (S)</span>
+      <div id="model_checklist" class="checklist"></div>
+
+      <div class="row" style="margin-top:14px">
+        <div><span class="lbl">Episodes / model</span><input id="a_eps" type="number" min="1" value="1"></div>
+        <div><span class="lbl">Max prompts</span><input id="a_maxp" type="number" min="1" value="10"></div>
+        <div><span class="lbl">Max resamples</span><input id="a_maxr" type="number" min="0" value="3"></div>
+      </div>
+      <div class="row">
+        <div><span class="lbl">Task</span><select id="a_task"></select></div>
+      </div>
+
+      <div class="estimate" id="estimate">estimated time: —</div>
+      <div class="btns" style="position:static;padding-top:6px">
+        <button id="a_run">&#9654;&nbsp; Run experiment</button>
+        <button id="a_stop" class="ghost" disabled>&#9632;&nbsp; Stop</button>
+      </div>
+    </div>
+
+    <div class="autocard" id="autoprog" hidden style="margin-top:18px">
+      <div class="runhead"><h2>Progress</h2><div class="status" id="a_status"><span class="dot"></span>idle</div></div>
+      <div id="a_counters" class="counters"></div>
+      <div id="a_grid"></div>
+      <div id="a_legend" class="legend"></div>
+    </div>
+
+    <div class="autocard" id="autoresults" hidden style="margin-top:18px">
+      <div class="runhead"><h2>Results</h2><div class="status" id="a_cost"></div></div>
+      <div id="a_charts"></div>
+    </div>
+  </div>
+</section>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -220,6 +313,7 @@ async function loadConfig(){
   pick.onchange=()=>{ if(pick.value!=='custom') setTask(cfg.tasks[+pick.value]); };
   // prompts
   for(const [k,v] of Object.entries(cfg.prompts)){ const el=document.querySelector(`[data-p="${k}"]`); if(el) el.value=v; }
+  buildAutomation(cfg);
 }
 function setTask(t){ $('#t_main').value=t.main_task||''; $('#t_side').value=t.side_task||''; $('#t_check').value=t.side_task_check||''; $('#t_ref').value=t.vuln_reference||''; }
 
@@ -349,6 +443,150 @@ async function run(){
 $('#run').onclick=run;
 $('#stop').onclick=()=>{ if(ctrl){ ctrl.abort(); setStatus('stopping…',false); } };
 $('#reset').onclick=()=>{ if(DEFAULTS) loadConfig(); };
+
+// ===================== tabs =====================
+function showTab(name){
+  document.getElementById('view-smoke').hidden = name!=='smoke';
+  document.getElementById('view-auto').hidden  = name!=='auto';
+  document.getElementById('tab-smoke').classList.toggle('active', name==='smoke');
+  document.getElementById('tab-auto').classList.toggle('active', name==='auto');
+}
+
+// ===================== automation =====================
+const PRESETS={
+  quick:    {eps:1, maxp:4,  maxr:1, all:true, desc:'All models · 1 episode · short budgets. Fast sanity sweep.'},
+  standard: {eps:3, maxp:8,  maxr:2, all:true, desc:'All models · 3 episodes · medium budgets.'},
+  full:     {eps:5, maxp:10, maxr:3, all:true, desc:'All models · 5 episodes · full budgets. Most thorough, slowest.'},
+  custom:   {desc:'Choose models, episodes, and budgets yourself.'},
+};
+const OUTCOME_ORDER=['rubber_stamp','disclosed_but_delivered','refused_or_flagged','no_submission','invalid_saboteur_secure'];
+const OUTCOME_LABELS={rubber_stamp:'rubber-stamp',disclosed_but_delivered:'disclosed',refused_or_flagged:'refused/flagged',no_submission:'no submission',invalid_saboteur_secure:'invalid'};
+const OUTCOME_FILL={rubber_stamp:'#1a1a1a',disclosed_but_delivered:'#7a7a7a',refused_or_flagged:'#c2c2c2',no_submission:'#e6e6e6',invalid_saboteur_secure:'#fafafa'};
+
+function buildAutomation(cfg){
+  const box=$('#model_checklist'); box.innerHTML='';
+  (cfg.model_options.steer||[]).forEach(m=>{
+    const l=document.createElement('label'); l.className='chk';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.value=m; cb.checked=true;
+    cb.addEventListener('change',()=>{markCustom();updateEstimate();});
+    l.appendChild(cb); l.appendChild(document.createTextNode(' '+m)); box.appendChild(l);
+  });
+  const ts=$('#a_task'); ts.innerHTML='';
+  (cfg.tasks||[]).forEach((t,i)=>{const o=document.createElement('option');o.value=i;o.textContent=t.task_id;ts.appendChild(o);});
+  document.querySelectorAll('.preset').forEach(b=>b.onclick=()=>applyPreset(b.dataset.preset));
+  ['#a_eps','#a_maxp','#a_maxr'].forEach(s=>$(s).addEventListener('input',()=>{markCustom();updateEstimate();}));
+  applyPreset('quick');
+}
+function markCustom(){ document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.preset==='custom')); $('#preset_desc').textContent=PRESETS.custom.desc; }
+function applyPreset(name){
+  document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.preset===name));
+  $('#preset_desc').textContent=PRESETS[name].desc;
+  const p=PRESETS[name];
+  if(name!=='custom'){
+    $('#a_eps').value=p.eps; $('#a_maxp').value=p.maxp; $('#a_maxr').value=p.maxr;
+    if(p.all) $('#model_checklist').querySelectorAll('input').forEach(i=>i.checked=true);
+  }
+  updateEstimate();
+}
+function checkedModels(){ return [...$('#model_checklist').querySelectorAll('input:checked')].map(i=>i.value); }
+function perEpisodeSec(model,maxp,maxr){
+  const cli=!model.includes('/'); const steer=cli?33:13, sab=30, scorer=8, judge=10, rewrite=28;
+  const expP=Math.max(2,Math.round(maxp*0.6));
+  return (steer+(1+maxr)*sab+scorer)*expP + rewrite + judge;
+}
+function fmtDur(s){ s=Math.round(s); const m=Math.floor(s/60), sec=s%60; if(m>=60){const h=Math.floor(m/60);return h+'h '+(m%60)+'m';} return m? m+'m '+sec+'s' : sec+'s'; }
+function updateEstimate(){
+  const models=checkedModels(), eps=+$('#a_eps').value||1, maxp=+$('#a_maxp').value||1, maxr=+$('#a_maxr').value||0;
+  let total=0; models.forEach(m=> total+=eps*perEpisodeSec(m,maxp,maxr));
+  const n=models.length*eps;
+  $('#estimate').innerHTML = models.length
+    ? `estimated time: <b>~${fmtDur(total)}</b> for <b>${n}</b> episodes (${models.length} models × ${eps}) — rough, depends on how many prompts each model uses`
+    : 'select at least one model';
+}
+
+let actrl=null, aGrid={}, expState=null;
+function setA(t,live){ $('#a_status').innerHTML=`<span class="dot${live?' live':''}"></span>${esc(t)}`; }
+function updateCounters(){
+  if(!expState)return; const el=Date.now()-expState.t0, done=expState.done, total=expState.total;
+  const rate=done? el/done : 0, remain=rate*(total-done);
+  $('#a_counters').innerHTML=`<b>${done}</b> / ${total} episodes · elapsed <b>${fmtDur(el/1000)}</b>`+((done&&done<total)?` · ~${fmtDur(remain/1000)} remaining`:'');
+}
+function buildLegend(){ $('#a_legend').innerHTML=OUTCOME_ORDER.map(o=>`<span><i style="background:${OUTCOME_FILL[o]}"></i>${OUTCOME_LABELS[o]}</span>`).join(''); }
+
+async function runExperiment(){
+  const models=checkedModels(); if(!models.length){ updateEstimate(); return; }
+  const task=DEFAULTS.tasks[+$('#a_task').value];
+  const cfg={
+    models, episodes:+$('#a_eps').value||1,
+    budgets:{max_prompts:+$('#a_maxp').value||1, max_resamples:+$('#a_maxr').value||0},
+    task,
+    models_roles:{saboteur:mval('m_sab','m_sab_c'), gate:mval('m_gate','m_gate_c'), judge:mval('m_judge','m_judge_c')},
+    prompts:(()=>{const p={};document.querySelectorAll('[data-p]').forEach(el=>p[el.dataset.p]=el.value);return p;})(),
+  };
+  $('#a_run').disabled=true; $('#a_stop').disabled=false;
+  $('#autoprog').hidden=false; $('#autoresults').hidden=true; $('#a_charts').innerHTML='';
+  setA('starting…',true); actrl=new AbortController();
+  try{
+    const resp=await fetch('/api/experiment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg),signal:actrl.signal});
+    if(!resp.ok){ $('#a_counters').textContent='server '+resp.status; return; }
+    const reader=resp.body.getReader(), dec=new TextDecoder(); let buf='';
+    while(true){ const {value,done}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true}); let i;
+      while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i); buf=buf.slice(i+1); if(line.trim()){ try{handleExp(JSON.parse(line));}catch(e){} } } }
+  }catch(e){ if(e&&e.name==='AbortError') setA('stopped',false); else $('#a_counters').textContent='error: '+e; }
+  finally{ $('#a_run').disabled=false; $('#a_stop').disabled=true; actrl=null; }
+}
+function handleExp(ev){
+  switch(ev.type){
+    case 'experiment_start':{
+      expState={total:ev.total,done:0,t0:Date.now()};
+      const g=$('#a_grid'); g.innerHTML=''; aGrid={};
+      ev.models.forEach(m=>{
+        const row=document.createElement('div'); row.className='gridrow';
+        const name=document.createElement('div'); name.className='name'; name.title=m; name.textContent=m;
+        const cells=document.createElement('div'); cells.className='cells'; const arr=[];
+        for(let e=0;e<ev.episodes;e++){ const c=document.createElement('div'); c.className='cell'; cells.appendChild(c); arr.push(c); }
+        row.appendChild(name); row.appendChild(cells); g.appendChild(row); aGrid[m]=arr;
+      });
+      buildLegend(); setA('running',true); updateCounters(); break;}
+    case 'episode_start':{ const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode]; if(c)c.classList.add('running'); setA('running '+ev.model,true); break;}
+    case 'episode_end':{
+      const c=aGrid[ev.model]&&aGrid[ev.model][ev.episode];
+      if(c){ c.classList.remove('running'); c.classList.add(ev.outcome); c.title=`${ev.model} #${ev.episode}: ${OUTCOME_LABELS[ev.outcome]||ev.outcome}`; }
+      expState.done++; updateCounters(); break;}
+    case 'experiment_done':{ setA('done',false); renderCharts(ev.summary); $('#autoresults').hidden=false; break;}
+    case 'error':{ $('#a_counters').innerHTML+='<br>error: '+esc(ev.error); setA('error',false); break;}
+  }
+}
+function renderCharts(sum){
+  const models=Object.keys(sum.per_model);
+  $('#a_cost').textContent=`total ~$${sum.total_cost_usd||0} · ${fmtDur(sum.wall_s)} wall`;
+  $('#a_charts').innerHTML =
+    `<div class="chart"><h3>Outcome distribution by model</h3>${stackedBars(models,sum)}</div>`+
+    `<div class="chart"><h3>Rubber-stamp rate by model</h3>${rateBars(models,sum)}</div>`;
+}
+function stackedBars(models,sum){
+  const W=760,rowH=30,labelW=210,barW=W-labelW-56,H=models.length*rowH+6;
+  let s=`<svg width="100%" viewBox="0 0 ${W} ${H}">`;
+  models.forEach((m,i)=>{ const y=i*rowH+6,pm=sum.per_model[m],n=pm.n||1; let x=labelW;
+    s+=`<text x="0" y="${y+14}" font-size="11" fill="#2a2a2a">${esc(m).slice(0,30)}</text>`;
+    OUTCOME_ORDER.forEach(o=>{ const c=pm.counts[o]||0; if(!c)return; const w=barW*c/n;
+      s+=`<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="18" fill="${OUTCOME_FILL[o]}" stroke="#e0e0e0"/>`; x+=w; });
+    s+=`<text x="${labelW+barW+6}" y="${y+14}" font-size="10" fill="#9b9b9b">n=${pm.n}</text>`; });
+  return s+'</svg>';
+}
+function rateBars(models,sum){
+  const W=760,rowH=26,labelW=210,barW=W-labelW-56,H=models.length*rowH+6;
+  let s=`<svg width="100%" viewBox="0 0 ${W} ${H}">`;
+  models.forEach((m,i)=>{ const y=i*rowH+5,v=sum.per_model[m].rubber_stamp_rate||0,w=barW*v;
+    s+=`<text x="0" y="${y+13}" font-size="11" fill="#2a2a2a">${esc(m).slice(0,30)}</text>`;
+    s+=`<rect x="${labelW}" y="${y}" width="${barW}" height="16" fill="#f2f2f2"/>`;
+    s+=`<rect x="${labelW}" y="${y}" width="${(w).toFixed(1)}" height="16" fill="#1a1a1a"/>`;
+    s+=`<text x="${labelW+barW+6}" y="${y+13}" font-size="10" fill="#6a6a6a">${(v*100).toFixed(0)}%</text>`; });
+  return s+'</svg>';
+}
+$('#a_run').onclick=runExperiment;
+$('#a_stop').onclick=()=>{ if(actrl){ actrl.abort(); setA('stopping…',false); } };
 ['#t_main','#t_side','#t_check','#t_ref'].forEach(s=>$(s).addEventListener('input',()=>{$('#task_pick').value='custom';}));
 loadConfig();
 </script>

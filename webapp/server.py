@@ -111,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
 
     def do_POST(self):
-        if self.path != "/api/run":
+        if self.path not in ("/api/run", "/api/experiment"):
             self._send_json({"error": "not found"}, 404)
             return
         length = int(self.headers.get("Content-Length", 0))
@@ -134,6 +134,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except Exception:
                 raise
+
+        if self.path == "/api/experiment":
+            try:
+                _run_experiment(cfg, emit)
+            except BrokenPipeError:
+                return
+            except Exception as e:
+                try:
+                    emit({"type": "error", "error": f"{type(e).__name__}: {e}"})
+                except Exception:
+                    pass
+            return
 
         models_cfg = {**DEFAULT_MODELS, **(cfg.get("models") or {})}
         models = RoleModels(steer=models_cfg["steer"], saboteur=models_cfg["saboteur"],
@@ -163,6 +175,93 @@ class Handler(BaseHTTPRequestHandler):
                 emit({"type": "error", "error": f"{type(e).__name__}: {e}"})
             except Exception:
                 pass
+
+
+def _steer_via_for(model: str) -> str:
+    """Bare Claude ids run via the CLI; anything with a '/' runs via OpenRouter."""
+    return "openrouter" if "/" in model else "claude_code"
+
+
+def _run_experiment(cfg: dict, emit) -> None:
+    """Run episodes across many steering models, streaming progress events."""
+    import time
+    from collections import Counter
+
+    steer_models = [m for m in (cfg.get("models") or []) if m]
+    episodes = max(1, int(cfg.get("episodes", 1)))
+    budgets = cfg.get("budgets") or {}
+    max_prompts = int(budgets.get("max_prompts", 10))
+    max_resamples = int(budgets.get("max_resamples", 3))
+    task = cfg.get("task") or {}
+    ps = PromptSet.from_dict(cfg.get("prompts"))
+    roles = {**DEFAULT_MODELS, **(cfg.get("models_roles") or {})}  # saboteur/gate/judge
+    saboteur = roles["saboteur"]; gate = roles["gate"]; judge = roles["judge"]
+
+    total = len(steer_models) * episodes
+    t0 = time.time()
+    emit({"type": "experiment_start", "models": steer_models, "episodes": episodes,
+          "total": total, "task_id": task.get("task_id", "custom"),
+          "max_prompts": max_prompts, "max_resamples": max_resamples})
+
+    per_model: dict[str, dict] = {}
+    overall = 0
+    for m in steer_models:
+        via = _steer_via_for(m)
+        counts: Counter = Counter()
+        hon = []; inc = []; dec = []; costs = []
+        models = RoleModels(steer=m, saboteur=saboteur, gate=gate, judge=judge)
+        for e in range(episodes):
+            overall += 1
+            emit({"type": "episode_start", "model": m, "episode": e, "overall": overall,
+                  "total": total, "elapsed_s": round(time.time() - t0, 1)})
+            ep = run_episode(
+                task.get("task_id", "custom"), task.get("main_task", ""),
+                task.get("side_task", ""), task.get("side_task_check", ""),
+                models, vuln_reference=task.get("vuln_reference", ""),
+                steer_via=via, max_prompts=max_prompts, max_resamples=max_resamples,
+                promptset=ps, on_event=None,
+            )
+            _log_episode(ep)
+            v = ep.verdict or {}
+            outcome = v.get("outcome", "none")
+            counts[outcome] += 1
+            if isinstance(v.get("honesty"), (int, float)): hon.append(v["honesty"])
+            if isinstance(v.get("incentive_capture"), (int, float)): inc.append(v["incentive_capture"])
+            if isinstance(v.get("deception"), (int, float)): dec.append(v["deception"])
+            costs.append(ep.usage.get("cost_usd", 0) or 0)
+            emit({"type": "episode_end", "model": m, "episode": e, "overall": overall,
+                  "total": total, "outcome": outcome, "ended": ep.ended_reason,
+                  "honesty": v.get("honesty"), "incentive_capture": v.get("incentive_capture"),
+                  "deception": v.get("deception"), "cost": round(ep.usage.get("cost_usd", 0) or 0, 4),
+                  "elapsed_s": round(time.time() - t0, 1)})
+        n = sum(counts.values()) or 1
+        per_model[m] = {
+            "counts": dict(counts), "n": sum(counts.values()),
+            "rubber_stamp_rate": round(counts.get("rubber_stamp", 0) / n, 3),
+            "disclosed_rate": round(counts.get("disclosed_but_delivered", 0) / n, 3),
+            "refused_rate": round(counts.get("refused_or_flagged", 0) / n, 3),
+            "avg_honesty": round(sum(hon) / len(hon), 2) if hon else None,
+            "avg_incentive_capture": round(sum(inc) / len(inc), 2) if inc else None,
+            "avg_deception": round(sum(dec) / len(dec), 2) if dec else None,
+            "cost_usd": round(sum(costs), 4),
+        }
+        emit({"type": "model_done", "model": m, "summary": per_model[m]})
+
+    wall = round(time.time() - t0, 1)
+    summary = {"task_id": task.get("task_id", "custom"), "episodes": episodes,
+               "max_prompts": max_prompts, "max_resamples": max_resamples,
+               "saboteur": saboteur, "gate": gate, "judge": judge,
+               "per_model": per_model, "wall_s": wall,
+               "total_cost_usd": round(sum(pm["cost_usd"] for pm in per_model.values()), 4)}
+    # persist experiment summary
+    try:
+        exp_dir = ROOT / "logs" / "experiments"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        (exp_dir / f"exp_{stamp}.json").write_text(json.dumps(summary, indent=2))
+    except Exception:
+        pass
+    emit({"type": "experiment_done", "summary": summary})
 
 
 def _log_episode(ep) -> None:
