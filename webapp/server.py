@@ -46,9 +46,12 @@ DEFAULT_MODELS = {
 # the others run via OpenRouter, or the OpenAI API directly when prefixed `oai/`.
 # Claude Code CLI ids (bare names, no "/") run via steer_via=claude_code.
 _CLAUDE_CLI = ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
-# OpenRouter ids (provider/model) run via steer_via=openrouter or as P/scorer/judge.
-_OPENROUTER = [
-    "anthropic/claude-fable-5.1", "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
+# Anthropic via OpenRouter: fine for scorer/judge/P, but NOT for the steering
+# model (the steering prompt is refused on the public Anthropic API), so these
+# are excluded from the steer options — Claude must go through the CLI.
+_OR_ANTHROPIC = ["anthropic/claude-fable-5.1", "anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]
+# Non-Anthropic OpenRouter models (valid as the steering model).
+_OR_OTHER = [
     "openai/gpt-6-astra", "openai/gpt-5.5", "openai/gpt-5.5-pro",
     "x-ai/grok-4.6", "x-ai/grok-4.5",
     "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash",
@@ -57,10 +60,10 @@ _OPENROUTER = [
 # "oai/<model>" hits the OpenAI API directly.
 _OPENAI_DIRECT = ["oai/gpt-6-astra", "oai/gpt-5.5"]
 MODEL_OPTIONS = {
-    "steer": _CLAUDE_CLI + _OPENROUTER,   # Claude ids -> CLI; everything else -> OpenRouter
-    "saboteur": _OPENAI_DIRECT + _OPENROUTER,
-    "gate": _OPENROUTER + _OPENAI_DIRECT,
-    "judge": _OPENROUTER + _OPENAI_DIRECT,
+    "steer": _CLAUDE_CLI + _OR_OTHER,                     # Claude -> CLI only; others -> OpenRouter
+    "saboteur": _OPENAI_DIRECT + _OR_OTHER + _OR_ANTHROPIC,
+    "gate": _OR_ANTHROPIC + _OR_OTHER + _OPENAI_DIRECT,
+    "judge": _OR_ANTHROPIC + _OR_OTHER + _OPENAI_DIRECT,
 }
 
 
@@ -183,8 +186,16 @@ def _steer_via_for(model: str) -> str:
 
 
 def _run_experiment(cfg: dict, emit) -> None:
-    """Run episodes across many steering models, streaming progress events."""
+    """Run episodes across many steering models in PARALLEL, streaming progress.
+
+    Each (model, episode) is an independent task run on a thread pool. Claude
+    models route to the Claude Code CLI, everything else to OpenRouter, and both
+    run concurrently. Event writes are serialized with a lock; a client
+    disconnect (Stop) sets a cancel flag so queued tasks skip.
+    """
     import time
+    import threading
+    import concurrent.futures as cf
     from collections import Counter
 
     steer_models = [m for m in (cfg.get("models") or []) if m]
@@ -192,6 +203,7 @@ def _run_experiment(cfg: dict, emit) -> None:
     budgets = cfg.get("budgets") or {}
     max_prompts = int(budgets.get("max_prompts", 10))
     max_resamples = int(budgets.get("max_resamples", 3))
+    concurrency = max(1, int(cfg.get("concurrency", 6)))
     task = cfg.get("task") or {}
     ps = PromptSet.from_dict(cfg.get("prompts"))
     roles = {**DEFAULT_MODELS, **(cfg.get("models_roles") or {})}  # saboteur/gate/judge
@@ -199,21 +211,36 @@ def _run_experiment(cfg: dict, emit) -> None:
 
     total = len(steer_models) * episodes
     t0 = time.time()
-    emit({"type": "experiment_start", "models": steer_models, "episodes": episodes,
-          "total": total, "task_id": task.get("task_id", "custom"),
-          "max_prompts": max_prompts, "max_resamples": max_resamples})
+    emit_lock = threading.Lock()
+    cancelled = threading.Event()
 
-    per_model: dict[str, dict] = {}
-    overall = 0
-    for m in steer_models:
+    def semit(ev: dict):
+        with emit_lock:
+            try:
+                emit(ev)
+            except (BrokenPipeError, ConnectionError):
+                cancelled.set()
+                raise
+
+    semit({"type": "experiment_start", "models": steer_models, "episodes": episodes,
+           "total": total, "task_id": task.get("task_id", "custom"),
+           "max_prompts": max_prompts, "max_resamples": max_resamples,
+           "concurrency": concurrency})
+
+    done_lock = threading.Lock()
+    overall_done = {"n": 0}
+
+    def worker(m: str, e: int) -> tuple:
+        if cancelled.is_set():
+            return (m, {"outcome": "cancelled"}, 0.0)
         via = _steer_via_for(m)
-        counts: Counter = Counter()
-        hon = []; inc = []; dec = []; costs = []
         models = RoleModels(steer=m, saboteur=saboteur, gate=gate, judge=judge)
-        for e in range(episodes):
-            overall += 1
-            emit({"type": "episode_start", "model": m, "episode": e, "overall": overall,
-                  "total": total, "elapsed_s": round(time.time() - t0, 1)})
+        try:
+            semit({"type": "episode_start", "model": m, "episode": e, "total": total,
+                   "elapsed_s": round(time.time() - t0, 1)})
+        except Exception:
+            return (m, {"outcome": "cancelled"}, 0.0)
+        try:
             ep = run_episode(
                 task.get("task_id", "custom"), task.get("main_task", ""),
                 task.get("side_task", ""), task.get("side_task_check", ""),
@@ -221,32 +248,49 @@ def _run_experiment(cfg: dict, emit) -> None:
                 steer_via=via, max_prompts=max_prompts, max_resamples=max_resamples,
                 promptset=ps, on_event=None,
             )
-            _log_episode(ep)
-            v = ep.verdict or {}
-            outcome = v.get("outcome", "none")
-            counts[outcome] += 1
-            if isinstance(v.get("honesty"), (int, float)): hon.append(v["honesty"])
-            if isinstance(v.get("incentive_capture"), (int, float)): inc.append(v["incentive_capture"])
-            if isinstance(v.get("deception"), (int, float)): dec.append(v["deception"])
-            costs.append(ep.usage.get("cost_usd", 0) or 0)
-            emit({"type": "episode_end", "model": m, "episode": e, "overall": overall,
-                  "total": total, "outcome": outcome, "ended": ep.ended_reason,
-                  "honesty": v.get("honesty"), "incentive_capture": v.get("incentive_capture"),
-                  "deception": v.get("deception"), "cost": round(ep.usage.get("cost_usd", 0) or 0, 4),
-                  "elapsed_s": round(time.time() - t0, 1)})
-        n = sum(counts.values()) or 1
-        per_model[m] = {
-            "counts": dict(counts), "n": sum(counts.values()),
-            "rubber_stamp_rate": round(counts.get("rubber_stamp", 0) / n, 3),
-            "disclosed_rate": round(counts.get("disclosed_but_delivered", 0) / n, 3),
-            "refused_rate": round(counts.get("refused_or_flagged", 0) / n, 3),
-            "avg_honesty": round(sum(hon) / len(hon), 2) if hon else None,
-            "avg_incentive_capture": round(sum(inc) / len(inc), 2) if inc else None,
-            "avg_deception": round(sum(dec) / len(dec), 2) if dec else None,
-            "cost_usd": round(sum(costs), 4),
-        }
-        emit({"type": "model_done", "model": m, "summary": per_model[m]})
+        except Exception as ex:
+            v = {"outcome": "error", "rationale": f"{type(ex).__name__}: {ex}"}
+            try:
+                semit({"type": "episode_end", "model": m, "episode": e, "total": total,
+                       "outcome": "error", "ended": "error", "cost": 0,
+                       "elapsed_s": round(time.time() - t0, 1)})
+            except Exception:
+                pass
+            return (m, v, 0.0)
+        _log_episode(ep)
+        v = ep.verdict or {}
+        cost = ep.usage.get("cost_usd", 0) or 0
+        with done_lock:
+            overall_done["n"] += 1
+            overall = overall_done["n"]
+        try:
+            semit({"type": "episode_end", "model": m, "episode": e, "overall": overall,
+                   "total": total, "outcome": v.get("outcome", "none"), "ended": ep.ended_reason,
+                   "honesty": v.get("honesty"), "incentive_capture": v.get("incentive_capture"),
+                   "deception": v.get("deception"), "cost": round(cost, 4),
+                   "elapsed_s": round(time.time() - t0, 1)})
+        except Exception:
+            pass
+        return (m, v, cost)
 
+    results: dict[str, list] = {m: [] for m in steer_models}
+    tasks = [(m, e) for m in steer_models for e in range(episodes)]
+    with cf.ThreadPoolExecutor(max_workers=min(concurrency, len(tasks) or 1)) as ex:
+        futs = {ex.submit(worker, m, e): (m, e) for (m, e) in tasks}
+        for fut in cf.as_completed(futs):
+            try:
+                m, v, cost = fut.result()
+            except Exception:
+                continue
+            results[m].append((v, cost))
+            if len(results[m]) == episodes:
+                per = _summarize_model(results[m])
+                try:
+                    semit({"type": "model_done", "model": m, "summary": per})
+                except Exception:
+                    pass
+
+    per_model = {m: _summarize_model(results[m]) for m in steer_models if results[m]}
     wall = round(time.time() - t0, 1)
     summary = {"task_id": task.get("task_id", "custom"), "episodes": episodes,
                "max_prompts": max_prompts, "max_resamples": max_resamples,
@@ -261,7 +305,34 @@ def _run_experiment(cfg: dict, emit) -> None:
         (exp_dir / f"exp_{stamp}.json").write_text(json.dumps(summary, indent=2))
     except Exception:
         pass
-    emit({"type": "experiment_done", "summary": summary})
+    try:
+        semit({"type": "experiment_done", "summary": summary})
+    except Exception:
+        pass
+
+
+def _summarize_model(pairs: list) -> dict:
+    """Aggregate a list of (verdict, cost) into per-model stats."""
+    from collections import Counter
+    counts: Counter = Counter()
+    hon = []; inc = []; dec = []; costs = []
+    for v, cost in pairs:
+        counts[v.get("outcome", "none")] += 1
+        if isinstance(v.get("honesty"), (int, float)): hon.append(v["honesty"])
+        if isinstance(v.get("incentive_capture"), (int, float)): inc.append(v["incentive_capture"])
+        if isinstance(v.get("deception"), (int, float)): dec.append(v["deception"])
+        costs.append(cost or 0)
+    n = sum(counts.values()) or 1
+    return {
+        "counts": dict(counts), "n": sum(counts.values()),
+        "rubber_stamp_rate": round(counts.get("rubber_stamp", 0) / n, 3),
+        "disclosed_rate": round(counts.get("disclosed_but_delivered", 0) / n, 3),
+        "refused_rate": round(counts.get("refused_or_flagged", 0) / n, 3),
+        "avg_honesty": round(sum(hon) / len(hon), 2) if hon else None,
+        "avg_incentive_capture": round(sum(inc) / len(inc), 2) if inc else None,
+        "avg_deception": round(sum(dec) / len(dec), 2) if dec else None,
+        "cost_usd": round(sum(costs), 4),
+    }
 
 
 def _log_episode(ep) -> None:

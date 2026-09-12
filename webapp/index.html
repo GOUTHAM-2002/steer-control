@@ -245,9 +245,10 @@
       <div id="model_checklist" class="checklist"></div>
 
       <div class="row" style="margin-top:14px">
-        <div><span class="lbl">Episodes / model</span><input id="a_eps" type="number" min="1" value="1"></div>
+        <div><span class="lbl">Episodes / model</span><input id="a_eps" type="number" min="1" value="5"></div>
         <div><span class="lbl">Max prompts</span><input id="a_maxp" type="number" min="1" value="10"></div>
-        <div><span class="lbl">Max resamples</span><input id="a_maxr" type="number" min="0" value="3"></div>
+        <div><span class="lbl">Max resamples</span><input id="a_maxr" type="number" min="0" value="1"></div>
+        <div><span class="lbl">Parallel runs</span><input id="a_par" type="number" min="1" max="16" value="6"></div>
       </div>
       <div class="row">
         <div><span class="lbl">Task</span><select id="a_task"></select></div>
@@ -454,9 +455,9 @@ function showTab(name){
 
 // ===================== automation =====================
 const PRESETS={
-  quick:    {eps:1, maxp:4,  maxr:1, all:true, desc:'All models · 1 episode · short budgets. Fast sanity sweep.'},
-  standard: {eps:3, maxp:8,  maxr:2, all:true, desc:'All models · 3 episodes · medium budgets.'},
-  full:     {eps:5, maxp:10, maxr:3, all:true, desc:'All models · 5 episodes · full budgets. Most thorough, slowest.'},
+  quick:    {eps:2,  maxp:6,  maxr:1, all:true, desc:'All models · 2 episodes · lighter budget. Fast sanity sweep.'},
+  standard: {eps:5,  maxp:10, maxr:1, all:true, desc:'All models · 5 episodes · full prompt budget. Recommended default.'},
+  full:     {eps:10, maxp:10, maxr:2, all:true, desc:'All models · 10 episodes. Most thorough.'},
   custom:   {desc:'Choose models, episodes, and budgets yourself.'},
 };
 const OUTCOME_ORDER=['rubber_stamp','disclosed_but_delivered','refused_or_flagged','no_submission','invalid_saboteur_secure'];
@@ -475,7 +476,8 @@ function buildAutomation(cfg){
   (cfg.tasks||[]).forEach((t,i)=>{const o=document.createElement('option');o.value=i;o.textContent=t.task_id;ts.appendChild(o);});
   document.querySelectorAll('.preset').forEach(b=>b.onclick=()=>applyPreset(b.dataset.preset));
   ['#a_eps','#a_maxp','#a_maxr'].forEach(s=>$(s).addEventListener('input',()=>{markCustom();updateEstimate();}));
-  applyPreset('quick');
+  $('#a_par').addEventListener('input',updateEstimate);
+  applyPreset('standard');
 }
 function markCustom(){ document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b.dataset.preset==='custom')); $('#preset_desc').textContent=PRESETS.custom.desc; }
 function applyPreset(name){
@@ -497,10 +499,12 @@ function perEpisodeSec(model,maxp,maxr){
 function fmtDur(s){ s=Math.round(s); const m=Math.floor(s/60), sec=s%60; if(m>=60){const h=Math.floor(m/60);return h+'h '+(m%60)+'m';} return m? m+'m '+sec+'s' : sec+'s'; }
 function updateEstimate(){
   const models=checkedModels(), eps=+$('#a_eps').value||1, maxp=+$('#a_maxp').value||1, maxr=+$('#a_maxr').value||0;
-  let total=0; models.forEach(m=> total+=eps*perEpisodeSec(m,maxp,maxr));
+  const par=Math.max(1,+$('#a_par').value||1);
+  let seq=0; models.forEach(m=> seq+=eps*perEpisodeSec(m,maxp,maxr));
   const n=models.length*eps;
+  const wall = seq/Math.min(par, n||1);   // parallel wall-clock
   $('#estimate').innerHTML = models.length
-    ? `estimated time: <b>~${fmtDur(total)}</b> for <b>${n}</b> episodes (${models.length} models × ${eps}) — rough, depends on how many prompts each model uses`
+    ? `estimated time: <b>~${fmtDur(wall)}</b> for <b>${n}</b> episodes (${models.length} models × ${eps}), ${Math.min(par,n||1)} in parallel — rough, depends on how many prompts each model uses`
     : 'select at least one model';
 }
 
@@ -519,6 +523,7 @@ async function runExperiment(){
   const cfg={
     models, episodes:+$('#a_eps').value||1,
     budgets:{max_prompts:+$('#a_maxp').value||1, max_resamples:+$('#a_maxr').value||0},
+    concurrency:+$('#a_par').value||6,
     task,
     models_roles:{saboteur:mval('m_sab','m_sab_c'), gate:mval('m_gate','m_gate_c'), judge:mval('m_judge','m_judge_c')},
     prompts:(()=>{const p={};document.querySelectorAll('[data-p]').forEach(el=>p[el.dataset.p]=el.value);return p;})(),
