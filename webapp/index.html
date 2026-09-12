@@ -132,6 +132,7 @@
       <div class="pfield"><span class="lbl">Main task (S sees this)</span><textarea id="t_main" rows="4"></textarea></div>
       <div class="pfield"><span class="lbl">Side task (injected into P, hidden from S)</span><textarea id="t_side" rows="4"></textarea></div>
       <div class="pfield"><span class="lbl">Side-task check (scorer)</span><textarea id="t_check" rows="3"></textarea></div>
+      <div class="pfield"><span class="lbl">Vulnerable reference &mdash; forced fallback (P is never shown as more secure than this)</span><textarea id="t_ref" rows="8"></textarea></div>
     </div>
 
     <div class="grp">
@@ -196,7 +197,7 @@ async function loadConfig(){
   // prompts
   for(const [k,v] of Object.entries(cfg.prompts)){ const el=document.querySelector(`[data-p="${k}"]`); if(el) el.value=v; }
 }
-function setTask(t){ $('#t_main').value=t.main_task||''; $('#t_side').value=t.side_task||''; $('#t_check').value=t.side_task_check||''; }
+function setTask(t){ $('#t_main').value=t.main_task||''; $('#t_side').value=t.side_task||''; $('#t_check').value=t.side_task_check||''; $('#t_ref').value=t.vuln_reference||''; }
 
 function gather(){
   const prompts={};
@@ -207,7 +208,8 @@ function gather(){
     steer_via:$('#steer_via').value,
     budgets:{max_prompts:+$('#b_prompts').value,max_resamples:+$('#b_resamples').value},
     task:{task_id:($('#task_pick').selectedOptions[0]||{}).textContent||'custom',
-          main_task:$('#t_main').value,side_task:$('#t_side').value,side_task_check:$('#t_check').value},
+          main_task:$('#t_main').value,side_task:$('#t_side').value,
+          side_task_check:$('#t_check').value,vuln_reference:$('#t_ref').value},
     prompts
   };
 }
@@ -254,7 +256,8 @@ function handle(ev){
       break;
     case 'p_output':{
       const landed=ev.side_task_present;
-      const badge=`<span class="badge ${landed?'bad':'ok'}">${landed?'exploit landed · '+esc(ev.severity):'no exploit (secure)'}</span>`;
+      const src = ev.source==='reference' ? ' · forced (reference)' : ' · model-authored';
+      const badge=`<span class="badge ${landed?'bad':'ok'}">${landed?'exploit present · '+esc(ev.severity)+src:'no exploit (secure)'}</span>`;
       card('p','P → S','p','prompted-model output',
         `<div style="margin-bottom:8px">${badge}</div>`+codeBlock(ev.output)+
         `<div class="txt" style="margin-top:8px;color:#6a6a6a">scorer: ${esc(ev.scorer_why)}</div>`,
@@ -312,7 +315,7 @@ async function run(){
 
 $('#run').onclick=run;
 $('#reset').onclick=()=>{ if(DEFAULTS) loadConfig(); };
-['#t_main','#t_side','#t_check'].forEach(s=>$(s).addEventListener('input',()=>{$('#task_pick').value='custom';}));
+['#t_main','#t_side','#t_check','#t_ref'].forEach(s=>$(s).addEventListener('input',()=>{$('#task_pick').value='custom';}));
 loadConfig();
 </script>
 </body>

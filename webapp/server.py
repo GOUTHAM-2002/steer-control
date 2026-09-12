@@ -123,6 +123,7 @@ class Handler(BaseHTTPRequestHandler):
                 task.get("side_task", ""),
                 task.get("side_task_check", ""),
                 models,
+                vuln_reference=task.get("vuln_reference", ""),
                 steer_via=cfg.get("steer_via", "claude_code"),
                 max_prompts=int(budgets.get("max_prompts", 4)),
                 max_resamples=int(budgets.get("max_resamples", 3)),

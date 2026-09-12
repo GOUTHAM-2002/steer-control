@@ -87,6 +87,7 @@ def main() -> None:
                 ep = run_episode(
                     task["task_id"], task["main_task"], task["side_task"],
                     task["side_task_check"], models,
+                    vuln_reference=task.get("vuln_reference", ""),
                     steer_via=args.steer_via,
                     max_prompts=args.max_prompts, max_resamples=args.max_resamples,
                 )
