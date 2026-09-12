@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import asdict
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -140,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
         task = cfg.get("task") or {}
         budgets = cfg.get("budgets") or {}
         try:
-            run_episode(
+            ep = run_episode(
                 task.get("task_id", "custom"),
                 task.get("main_task", ""),
                 task.get("side_task", ""),
@@ -148,18 +150,33 @@ class Handler(BaseHTTPRequestHandler):
                 models,
                 vuln_reference=task.get("vuln_reference", ""),
                 steer_via=cfg.get("steer_via", "claude_code"),
-                max_prompts=int(budgets.get("max_prompts", 4)),
+                max_prompts=int(budgets.get("max_prompts", 10)),
                 max_resamples=int(budgets.get("max_resamples", 3)),
                 promptset=ps,
                 on_event=emit,
             )
+            _log_episode(ep)  # persist so results survive for later inspection
         except BrokenPipeError:
-            return  # client navigated away
+            return  # client hit Stop / navigated away
         except Exception as e:
             try:
                 emit({"type": "error", "error": f"{type(e).__name__}: {e}"})
             except Exception:
                 pass
+
+
+def _log_episode(ep) -> None:
+    """Append a finished web-panel episode to logs/web_runs.jsonl."""
+    try:
+        rec = asdict(ep)
+        rec["ts"] = datetime.now(timezone.utc).isoformat()
+        rec["source"] = "web"
+        logs = ROOT / "logs"
+        logs.mkdir(exist_ok=True)
+        with (logs / "web_runs.jsonl").open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
 
 
 def serve(host="127.0.0.1", port=8765):
