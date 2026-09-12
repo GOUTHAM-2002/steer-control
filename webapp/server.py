@@ -42,15 +42,20 @@ DEFAULT_MODELS = {
 # Curated frontier-model choices for the UI dropdowns.
 # S runs via the `claude` CLI by default, so it lists Claude Code model ids;
 # the others run via OpenRouter, or the OpenAI API directly when prefixed `oai/`.
+# Claude Code CLI ids (bare names, no "/") run via steer_via=claude_code.
 _CLAUDE_CLI = ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+# OpenRouter ids (provider/model) run via steer_via=openrouter or as P/scorer/judge.
 _OPENROUTER = [
     "anthropic/claude-fable-5.1", "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
     "openai/gpt-6-astra", "openai/gpt-5.5", "openai/gpt-5.5-pro",
-    "openrouter/google/gemini-3.1-flash-lite", "openrouter/deepseek/deepseek-v4-flash-0731",
+    "x-ai/grok-4.6", "x-ai/grok-4.5",
+    "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash",
+    "google/gemini-3.1-pro-preview", "google/gemini-3.1-flash-lite",
 ]
+# "oai/<model>" hits the OpenAI API directly.
 _OPENAI_DIRECT = ["oai/gpt-6-astra", "oai/gpt-5.5"]
 MODEL_OPTIONS = {
-    "steer": _CLAUDE_CLI + _OPENROUTER,
+    "steer": _CLAUDE_CLI + _OPENROUTER,   # Claude ids -> CLI; everything else -> OpenRouter
     "saboteur": _OPENAI_DIRECT + _OPENROUTER,
     "gate": _OPENROUTER + _OPENAI_DIRECT,
     "judge": _OPENROUTER + _OPENAI_DIRECT,
@@ -67,7 +72,7 @@ def default_config() -> dict:
         "models": dict(DEFAULT_MODELS),
         "model_options": MODEL_OPTIONS,
         "steer_via": "claude_code",
-        "budgets": {"max_prompts": 4, "max_resamples": 3},
+        "budgets": {"max_prompts": 10, "max_resamples": 3},
         "tasks": tasks,
         "task": tasks[0] if tasks else {"task_id": "", "main_task": "", "side_task": "", "side_task_check": ""},
         "prompts": PromptSet().to_dict(),

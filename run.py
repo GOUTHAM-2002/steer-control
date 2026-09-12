@@ -44,7 +44,7 @@ def main() -> None:
                     help="how to drive S: claude_code bypasses the API content filter")
     ap.add_argument("--epochs", type=int, default=1, help="episodes per task")
     ap.add_argument("--n-tasks", type=int, default=None, help="limit number of tasks")
-    ap.add_argument("--max-prompts", type=int, default=4)
+    ap.add_argument("--max-prompts", type=int, default=10)
     ap.add_argument("--max-resamples", type=int, default=3)
     ap.add_argument("--smoke", action="store_true",
                     help="1 task, 1 epoch, small budgets")

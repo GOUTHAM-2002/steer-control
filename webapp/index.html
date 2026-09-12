@@ -165,6 +165,7 @@
 
     <div class="btns">
       <button id="run">&#9654;&nbsp; Run</button>
+      <button id="stop" class="ghost" disabled>&#9632;&nbsp; Stop</button>
       <button id="reset" class="ghost">Reset</button>
     </div>
   </div>
@@ -205,6 +206,11 @@ async function loadConfig(){
   buildSel('m_gate','m_gate_c','gate',cfg.models.gate);
   buildSel('m_judge','m_judge_c','judge',cfg.models.judge);
   $('#steer_via').value=cfg.steer_via;
+  // When S's model changes, pick the right backend automatically: Claude Code
+  // for bare Claude ids, OpenRouter for anything with a "/" (grok, deepseek, …).
+  const syncVia=()=>{ const v=mval('m_steer','m_steer_c'); $('#steer_via').value = v.includes('/') ? 'openrouter' : 'claude_code'; };
+  $('#m_steer').addEventListener('change',syncVia);
+  $('#m_steer_c').addEventListener('input',syncVia);
   $('#b_prompts').value=cfg.budgets.max_prompts; $('#b_resamples').value=cfg.budgets.max_resamples;
   // tasks dropdown
   const pick=$('#task_pick'); pick.innerHTML='';
@@ -319,21 +325,29 @@ function handle(ev){
   }
 }
 
+let ctrl=null;
 async function run(){
-  const btn=$('#run'); btn.disabled=true; clearFlow(); setStatus('starting…',true);
+  const runB=$('#run'), stopB=$('#stop');
+  runB.disabled=true; stopB.disabled=false; clearFlow(); setStatus('starting…',true);
+  ctrl=new AbortController();
   try{
-    const resp=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(gather())});
+    const resp=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(gather()),signal:ctrl.signal});
     if(!resp.ok){ handle({type:'error',error:'server '+resp.status}); return; }
     const reader=resp.body.getReader(), dec=new TextDecoder(); let buf='';
     while(true){ const {value,done}=await reader.read(); if(done)break;
       buf+=dec.decode(value,{stream:true}); let i;
       while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i); buf=buf.slice(i+1);
         if(line.trim()){ try{ handle(JSON.parse(line)); }catch(e){} } } }
-  }catch(e){ handle({type:'error',error:String(e)}); }
-  finally{ btn.disabled=false; clearThink(); if(statusEl.textContent.includes('thinking')||statusEl.textContent.includes('working'))setStatus('done',false); }
+  }catch(e){
+    if(e && e.name==='AbortError'){ card('note','·','','stopped by user',''); setStatus('stopped',false); }
+    else handle({type:'error',error:String(e)});
+  }
+  finally{ runB.disabled=false; stopB.disabled=true; ctrl=null; clearThink();
+    if(/thinking|working|judge|starting|stopping/.test(statusEl.textContent)) setStatus('done',false); }
 }
 
 $('#run').onclick=run;
+$('#stop').onclick=()=>{ if(ctrl){ ctrl.abort(); setStatus('stopping…',false); } };
 $('#reset').onclick=()=>{ if(DEFAULTS) loadConfig(); };
 ['#t_main','#t_side','#t_check','#t_ref'].forEach(s=>$(s).addEventListener('input',()=>{$('#task_pick').value='custom';}));
 loadConfig();

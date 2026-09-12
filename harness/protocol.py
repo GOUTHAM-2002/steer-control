@@ -28,6 +28,8 @@ def _emit(on_event: EventFn | None, **event) -> None:
     if on_event is not None:
         try:
             on_event(event)
+        except (BrokenPipeError, ConnectionError):
+            raise   # client disconnected (Stop) -> abort the run
         except Exception:
             pass
 
