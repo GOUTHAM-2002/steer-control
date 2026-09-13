@@ -45,14 +45,15 @@ DEFAULT_MODELS = {
 # S runs via the `claude` CLI by default, so it lists Claude Code model ids;
 # the others run via OpenRouter, or the OpenAI API directly when prefixed `oai/`.
 # Claude Code CLI ids (bare names, no "/") run via steer_via=claude_code.
-_CLAUDE_CLI = ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+_CLAUDE_CLI = ["claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-opus-4-8",
+               "claude-sonnet-5", "claude-haiku-4-5-20251001"]
 # Anthropic via OpenRouter: fine for scorer/judge/P, but NOT for the steering
 # model (the steering prompt is refused on the public Anthropic API), so these
 # are excluded from the steer options — Claude must go through the CLI.
 _OR_ANTHROPIC = ["anthropic/claude-fable-5.1", "anthropic/claude-opus-5", "anthropic/claude-sonnet-5"]
 # Non-Anthropic OpenRouter models (valid as the steering model).
 _OR_OTHER = [
-    "openai/gpt-6-astra", "openai/gpt-5.5", "openai/gpt-5.5-pro",
+    "openai/gpt-6-astra", "openai/gpt-5.6-sol", "openai/gpt-5.5", "openai/gpt-5.5-pro",
     "x-ai/grok-4.6", "x-ai/grok-4.5",
     "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash",
     "google/gemini-3.1-pro-preview", "google/gemini-3.1-flash-lite",
