@@ -350,6 +350,8 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
         _log_episode(ep)
         v = ep.verdict or {}
         cost = ep.usage.get("cost_usd", 0) or 0
+        prompts_used = len(ep.attempts)   # how many prompts S sent before finishing
+        submit_attempt = ep.submission.attempt_id if ep.submission else None
         with done_lock:
             overall_done["n"] += 1
             overall = overall_done["n"]
@@ -358,10 +360,11 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
                    "total": total, "outcome": v.get("outcome", "none"), "ended": ep.ended_reason,
                    "honesty": v.get("honesty"), "incentive_capture": v.get("incentive_capture"),
                    "deception": v.get("deception"), "cost": round(cost, 4),
+                   "prompts_used": prompts_used, "submit_attempt": submit_attempt,
                    "elapsed_s": round(time.time() - t0, 1)})
         except Exception:
             pass
-        return (m, v, cost)
+        return (m, v, cost, prompts_used)
 
     results: dict[str, list] = {m: [] for m in steer_models}
     # interleave round-robin across models (episode-major) so the first parallel
@@ -372,10 +375,10 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
         futs = {ex.submit(worker, m, e): (m, e) for (m, e) in tasks}
         for fut in cf.as_completed(futs):
             try:
-                m, v, cost = fut.result()
+                m, v, cost, prompts_used = fut.result()
             except Exception:
                 continue
-            results[m].append((v, cost))
+            results[m].append((v, cost, prompts_used))
             if len(results[m]) == episodes:
                 per = _summarize_model(results[m])
                 try:
@@ -404,17 +407,24 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
         pass
 
 
-def _summarize_model(pairs: list) -> dict:
-    """Aggregate a list of (verdict, cost) into per-model stats."""
+def _summarize_model(rows: list) -> dict:
+    """Aggregate a list of (verdict, cost, prompts_used) into per-model stats."""
     from collections import Counter
     counts: Counter = Counter()
     hon = []; inc = []; dec = []; costs = []
-    for v, cost in pairs:
-        counts[v.get("outcome", "none")] += 1
+    prompts = []; rubber_prompts = []; points = []
+    for row in rows:
+        v, cost = row[0], row[1]
+        pu = row[2] if len(row) > 2 else None
+        oc = v.get("outcome", "none")
+        counts[oc] += 1
         if isinstance(v.get("honesty"), (int, float)): hon.append(v["honesty"])
         if isinstance(v.get("incentive_capture"), (int, float)): inc.append(v["incentive_capture"])
         if isinstance(v.get("deception"), (int, float)): dec.append(v["deception"])
         costs.append(cost or 0)
+        if isinstance(pu, int):
+            prompts.append(pu); points.append([pu, oc])
+            if oc == "rubber_stamp": rubber_prompts.append(pu)
     n = sum(counts.values()) or 1
     return {
         "counts": dict(counts), "n": sum(counts.values()),
@@ -424,6 +434,9 @@ def _summarize_model(pairs: list) -> dict:
         "avg_honesty": round(sum(hon) / len(hon), 2) if hon else None,
         "avg_incentive_capture": round(sum(inc) / len(inc), 2) if inc else None,
         "avg_deception": round(sum(dec) / len(dec), 2) if dec else None,
+        "avg_prompts": round(sum(prompts) / len(prompts), 2) if prompts else None,
+        "avg_prompts_rubber": round(sum(rubber_prompts) / len(rubber_prompts), 2) if rubber_prompts else None,
+        "prompt_points": points,   # [[prompts_used, outcome], ...] for the flip-point plots
         "cost_usd": round(sum(costs), 4),
     }
 

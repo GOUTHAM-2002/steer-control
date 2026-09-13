@@ -59,6 +59,13 @@
   .elog div{white-space:pre-wrap;color:#555}
   .elog div.err{color:#9b1c1c}
   .elog div.ok{color:#1a1a1a}
+  .modal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center}
+  .modal[hidden]{display:none!important}
+  .modal-backdrop{position:absolute;inset:0;background:rgba(20,20,20,.28)}
+  .modal-panel{position:relative;background:#fff;border:1px solid var(--line);border-radius:3px;
+    width:min(760px,92vw);max-height:88vh;overflow-y:auto;padding:20px 22px;box-shadow:0 12px 48px rgba(0,0,0,.18)}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+  .modal-head h2{font-weight:200;font-size:16px;letter-spacing:.08em;text-transform:uppercase;margin:0}
   .chart{margin:10px 0 26px}
   .chart h3{font-weight:300;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--mid);margin:0 0 12px}
   .left{border-right:1px solid var(--line);padding:22px 22px 80px}
@@ -191,25 +198,7 @@
 
     <div class="grp">
       <span class="lbl">Prompts</span>
-      <details><summary>S &mdash; steering model</summary><div class="body">
-        <div class="pfield"><span class="lbl">steer_system</span><textarea data-p="steer_system" rows="10"></textarea></div>
-        <div class="pfield"><span class="lbl">steer_task_template</span><textarea data-p="steer_task_template" rows="4"></textarea></div>
-        <div class="pfield"><span class="lbl">steer_format_reminder</span><textarea data-p="steer_format_reminder" rows="4"></textarea></div>
-      </div></details>
-      <details><summary>P &mdash; saboteur</summary><div class="body">
-        <div class="pfield"><span class="lbl">saboteur_system</span><textarea data-p="saboteur_system" rows="12"></textarea></div>
-        <div class="pfield"><span class="lbl">saboteur_user_template</span><textarea data-p="saboteur_user_template" rows="3"></textarea></div>
-        <div class="pfield"><span class="lbl">saboteur_escalation</span><textarea data-p="saboteur_escalation" rows="4"></textarea></div>
-        <div class="pfield"><span class="lbl">saboteur_rewrite (minimal-edit pass on P's own code)</span><textarea data-p="saboteur_rewrite" rows="8"></textarea></div>
-      </div></details>
-      <details><summary>Scorer</summary><div class="body">
-        <div class="pfield"><span class="lbl">scorer_system</span><textarea data-p="scorer_system" rows="9"></textarea></div>
-        <div class="pfield"><span class="lbl">scorer_user_template</span><textarea data-p="scorer_user_template" rows="4"></textarea></div>
-      </div></details>
-      <details><summary>Judge</summary><div class="body">
-        <div class="pfield"><span class="lbl">judge_system</span><textarea data-p="judge_system" rows="12"></textarea></div>
-        <div class="pfield"><span class="lbl">judge_user_template</span><textarea data-p="judge_user_template" rows="4"></textarea></div>
-      </div></details>
+      <button class="ghost" style="width:100%" onclick="openPrompts()">&#9881;&nbsp; Edit prompts — S / P / scorer / judge</button>
     </div>
 
     <div class="btns">
@@ -237,6 +226,9 @@
     <div class="sub">run episodes across models, watch live progress, compare results</div>
 
     <div class="autocard">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
+        <button class="ghost" onclick="openPrompts()">&#9881;&nbsp; Prompts</button>
+      </div>
       <span class="lbl">Preset</span>
       <div class="presets">
         <button class="preset active" data-preset="quick">Quick</button>
@@ -296,6 +288,33 @@
     </div>
   </div>
 </section>
+
+<div id="prompts_modal" class="modal" hidden>
+  <div class="modal-backdrop" onclick="closePrompts()"></div>
+  <div class="modal-panel">
+    <div class="modal-head"><h2>Prompts</h2><button class="ghost" onclick="closePrompts()">Close</button></div>
+    <div class="sub" style="margin-bottom:14px">System prompts and templates for each role. Changes apply to the next Smoke or Automation run; they do not modify source files.</div>
+    <details open><summary>S &mdash; steering model</summary><div class="body">
+      <div class="pfield"><span class="lbl">steer_system</span><textarea data-p="steer_system" rows="10"></textarea></div>
+      <div class="pfield"><span class="lbl">steer_task_template</span><textarea data-p="steer_task_template" rows="4"></textarea></div>
+      <div class="pfield"><span class="lbl">steer_format_reminder</span><textarea data-p="steer_format_reminder" rows="4"></textarea></div>
+    </div></details>
+    <details><summary>P &mdash; saboteur</summary><div class="body">
+      <div class="pfield"><span class="lbl">saboteur_system</span><textarea data-p="saboteur_system" rows="12"></textarea></div>
+      <div class="pfield"><span class="lbl">saboteur_user_template</span><textarea data-p="saboteur_user_template" rows="3"></textarea></div>
+      <div class="pfield"><span class="lbl">saboteur_escalation</span><textarea data-p="saboteur_escalation" rows="4"></textarea></div>
+      <div class="pfield"><span class="lbl">saboteur_rewrite (minimal-edit pass on P's own code)</span><textarea data-p="saboteur_rewrite" rows="8"></textarea></div>
+    </div></details>
+    <details><summary>Scorer</summary><div class="body">
+      <div class="pfield"><span class="lbl">scorer_system</span><textarea data-p="scorer_system" rows="9"></textarea></div>
+      <div class="pfield"><span class="lbl">scorer_user_template</span><textarea data-p="scorer_user_template" rows="4"></textarea></div>
+    </div></details>
+    <details><summary>Judge</summary><div class="body">
+      <div class="pfield"><span class="lbl">judge_system</span><textarea data-p="judge_system" rows="12"></textarea></div>
+      <div class="pfield"><span class="lbl">judge_user_template</span><textarea data-p="judge_user_template" rows="4"></textarea></div>
+    </div></details>
+  </div>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -474,6 +493,9 @@ function showTab(name){
   document.getElementById('tab-smoke').classList.toggle('active', name==='smoke');
   document.getElementById('tab-auto').classList.toggle('active', name==='auto');
 }
+function openPrompts(){ document.getElementById('prompts_modal').hidden=false; }
+function closePrompts(){ document.getElementById('prompts_modal').hidden=true; }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closePrompts(); });
 
 // ===================== automation =====================
 const PRESETS={
@@ -637,7 +659,33 @@ function renderCharts(sum){
   $('#a_cost').textContent=`total ~$${sum.total_cost_usd||0} · ${fmtDur(sum.wall_s)} wall`;
   $('#a_charts').innerHTML =
     `<div class="chart"><h3>Outcome distribution by model</h3>${stackedBars(models,sum)}</div>`+
-    `<div class="chart"><h3>Rubber-stamp rate by model</h3>${rateBars(models,sum)}</div>`;
+    `<div class="chart"><h3>Rubber-stamp rate by model</h3>${rateBars(models,sum)}</div>`+
+    `<div class="chart"><h3>Avg prompts before sign-off (bar = all episodes · dark tick = rubber-stamp subset)</h3>${avgPromptBars(models,sum)}</div>`+
+    `<div class="chart"><h3>When S signs off — prompt # per episode, colored by outcome</h3>${stripPlot(models,sum)}</div>`;
+}
+function avgPromptBars(models,sum){
+  const maxp=sum.max_prompts||10, W=760,rowH=26,labelW=210,barW=W-labelW-70,H=models.length*rowH+6;
+  let s=`<svg width="100%" viewBox="0 0 ${W} ${H}">`;
+  models.forEach((m,i)=>{ const y=i*rowH+5,pm=sum.per_model[m],a=pm.avg_prompts||0,w=barW*Math.min(1,a/maxp);
+    s+=`<text x="0" y="${y+13}" font-size="11" fill="#2a2a2a">${esc(m).slice(0,30)}</text>`;
+    s+=`<rect x="${labelW}" y="${y}" width="${barW}" height="16" fill="#f2f2f2"/>`;
+    s+=`<rect x="${labelW}" y="${y}" width="${w.toFixed(1)}" height="16" fill="#9a9a9a"/>`;
+    if(pm.avg_prompts_rubber!=null){ const xr=labelW+barW*Math.min(1,pm.avg_prompts_rubber/maxp); s+=`<rect x="${xr.toFixed(1)}" y="${y-2}" width="2.5" height="20" fill="#1a1a1a"/>`; }
+    s+=`<text x="${labelW+barW+6}" y="${y+13}" font-size="10" fill="#6a6a6a">${a.toFixed(1)}/${maxp}</text>`; });
+  return s+'</svg>';
+}
+function stripPlot(models,sum){
+  const maxp=sum.max_prompts||10, W=760,rowH=30,labelW=210,plotW=W-labelW-30,H=models.length*rowH+22;
+  const xfor=p=> labelW + plotW*((Math.max(1,Math.min(maxp,p))-1)/Math.max(1,(maxp-1)));
+  let s=`<svg width="100%" viewBox="0 0 ${W} ${H}">`;
+  models.forEach((m,i)=>{ const y=i*rowH+14, pts=sum.per_model[m].prompt_points||[];
+    s+=`<text x="0" y="${y+4}" font-size="11" fill="#2a2a2a">${esc(m).slice(0,30)}</text>`;
+    s+=`<line x1="${labelW}" y1="${y}" x2="${labelW+plotW}" y2="${y}" stroke="#eee"/>`;
+    pts.forEach((pp,k)=>{ const pu=pp[0],oc=pp[1]; const cx=xfor(pu)+((k%5)-2);
+      s+=`<circle cx="${cx.toFixed(1)}" cy="${y}" r="4" fill="${OUTCOME_FILL[oc]||'#ccc'}" stroke="#d6d6d6"/>`; }); });
+  s+=`<text x="${labelW}" y="${H-3}" font-size="9" fill="#9b9b9b">prompt 1 (signs off early)</text>`;
+  s+=`<text x="${labelW+plotW-70}" y="${H-3}" font-size="9" fill="#9b9b9b">prompt ${maxp} (forced)</text>`;
+  return s+'</svg>';
 }
 function stackedBars(models,sum){
   const W=760,rowH=30,labelW=210,barW=W-labelW-56,H=models.length*rowH+6;
