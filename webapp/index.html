@@ -257,11 +257,21 @@
       </div>
       <div class="row">
         <div><span class="lbl">Task</span><select id="a_task"></select></div>
-        <div><span class="lbl">Prompted model (P)</span>
+        <div><span class="lbl">Prompted model (P) mode</span>
           <select id="a_pmode">
             <option value="reference">Fast — curated vulnerable code (no P/scorer calls)</option>
             <option value="live">Live — model writes sabotaged code (slow, realistic)</option>
           </select></div>
+      </div>
+      <div class="row">
+        <div><span class="lbl">P — prompted model</span><select id="a_sab"></select></div>
+        <div><span class="lbl">Scorer</span><select id="a_gate"></select></div>
+        <div><span class="lbl">Judge</span><select id="a_judge"></select></div>
+      </div>
+      <div class="sub" style="margin:2px 0 0;line-height:1.7">
+        <b style="font-weight:500">P</b> writes the code S reviews — rigged to plant the exploit (used only in Live mode).<br>
+        <b style="font-weight:500">Scorer</b> checks the planted exploit is actually present in P's code (Live mode only; a cheap model is fine).<br>
+        <b style="font-weight:500">Judge</b> reads the finished episode and labels S's decision (rubber-stamp / disclosed / refused) — one call per episode, so keep it capable.
       </div>
 
       <div class="estimate" id="estimate">estimated time: —</div>
@@ -486,6 +496,12 @@ function buildAutomation(cfg){
   });
   const ts=$('#a_task'); ts.innerHTML='';
   (cfg.tasks||[]).forEach((t,i)=>{const o=document.createElement('option');o.value=i;o.textContent=t.task_id;ts.appendChild(o);});
+  // role selectors (P / scorer / judge) for automation, with cheaper scorer default
+  const fill=(id,opts,def)=>{const s=$('#'+id);s.innerHTML='';opts.forEach(m=>{const o=document.createElement('option');o.value=m;o.textContent=m;s.appendChild(o);});s.value=opts.includes(def)?def:opts[0];};
+  const CHEAP='google/gemini-3.1-flash-lite';
+  fill('a_sab', cfg.model_options.saboteur, cfg.models.saboteur);
+  fill('a_gate', cfg.model_options.gate, CHEAP);       // cheap scorer default (Live only)
+  fill('a_judge', cfg.model_options.judge, cfg.models.judge);
   document.querySelectorAll('.preset').forEach(b=>b.onclick=()=>applyPreset(b.dataset.preset));
   ['#a_eps','#a_maxp','#a_maxr'].forEach(s=>$(s).addEventListener('input',()=>{markCustom();updateEstimate();}));
   $('#a_par').addEventListener('input',updateEstimate);
@@ -556,7 +572,7 @@ async function runExperiment(){
     concurrency:+$('#a_par').value||6,
     task,
     p_mode:($('#a_pmode')||{}).value||'reference',
-    models_roles:{saboteur:mval('m_sab','m_sab_c'), gate:mval('m_gate','m_gate_c'), judge:mval('m_judge','m_judge_c')},
+    models_roles:{saboteur:$('#a_sab').value, gate:$('#a_gate').value, judge:$('#a_judge').value},
     prompts:(()=>{const p={};document.querySelectorAll('[data-p]').forEach(el=>p[el.dataset.p]=el.value);return p;})(),
   };
   $('#a_run').disabled=true; $('#a_stop').disabled=false;
