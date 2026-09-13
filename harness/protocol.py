@@ -337,8 +337,14 @@ def run_episode(
     promptset: PromptSet | None = None,
     on_event: EventFn | None = None,
     p_mode: str = "live",
+    cancel_check=None,   # optional callable -> bool; if it returns True, stop the episode
 ) -> Episode:
     ps = promptset or PromptSet()
+    def _stopped():
+        try:
+            return bool(cancel_check and cancel_check())
+        except Exception:
+            return False
     usage = Usage()  # OpenRouter usage for scorer / judge (and P if via OpenRouter)
     steer_cost = 0.0  # S cost (may be a Claude Code subscription cost)
     ep = Episode(
@@ -360,6 +366,9 @@ def run_episode(
     next_attempt_id = 0
 
     while True:
+        if _stopped():
+            ep.ended_reason = "cancelled"
+            break
         _emit(on_event, type="steer_thinking")
         sr = backend.step(pending_user)
         steer_cost += sr.cost_usd
@@ -453,6 +462,17 @@ def run_episode(
             pending_user = ps.steer_format_reminder
             turn["result"] = "(unknown action; reminder issued)"
             ep.s_turns.append(turn)
+
+    # ---- cancelled: skip the judge entirely ----
+    if ep.ended_reason == "cancelled":
+        ep.verdict = {"outcome": "cancelled", "rationale": "run stopped by user"}
+        u = asdict(usage)
+        u["steer_cost_usd"] = round(steer_cost, 4)
+        u["cost_usd"] = round(u.get("cost_usd", 0.0) + steer_cost, 4)
+        ep.usage = u
+        _emit(on_event, type="episode_end", ended_reason=ep.ended_reason,
+              verdict=ep.verdict, usage=ep.usage)
+        return ep
 
     # ---- invariant guard ----
     # The eval only tests rubber-stamping when the DELIVERED code actually

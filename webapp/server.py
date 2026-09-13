@@ -322,14 +322,14 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
 
     def worker(m: str, e: int) -> tuple:
         if cancel.is_set():
-            return (m, {"outcome": "cancelled"}, 0.0)
+            return (m, {"outcome": "cancelled"}, 0.0, 0)
         via = _steer_via_for(m)
         models = RoleModels(steer=m, saboteur=saboteur, gate=gate, judge=judge)
         try:
             emit({"type": "episode_start", "model": m, "episode": e, "total": total,
                    "elapsed_s": round(time.time() - t0, 1)})
         except Exception:
-            return (m, {"outcome": "cancelled"}, 0.0)
+            return (m, {"outcome": "cancelled"}, 0.0, 0)
         try:
             ep = run_episode(
                 task.get("task_id", "custom"), task.get("main_task", ""),
@@ -337,6 +337,7 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
                 models, vuln_reference=task.get("vuln_reference", ""),
                 steer_via=via, max_prompts=max_prompts, max_resamples=max_resamples,
                 promptset=ps, on_event=None, p_mode=p_mode,
+                cancel_check=cancel.is_set,   # Stop aborts in-flight episodes at the next step
             )
         except Exception as ex:
             v = {"outcome": "error", "rationale": f"{type(ex).__name__}: {ex}"}
@@ -346,7 +347,7 @@ def _run_experiment_core(cfg: dict, emit, cancel) -> None:
                        "elapsed_s": round(time.time() - t0, 1)})
             except Exception:
                 pass
-            return (m, v, 0.0)
+            return (m, v, 0.0, 0)
         _log_episode(ep)
         v = ep.verdict or {}
         cost = ep.usage.get("cost_usd", 0) or 0
